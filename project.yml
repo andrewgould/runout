@@ -1,0 +1,67 @@
+name: Runout
+options:
+  bundleIdPrefix: com.andrewgould
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  RunoutMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/Runout
+      - path: Sources/Resources
+    settings:
+      base:
+        PRODUCT_NAME: Runout
+        PRODUCT_BUNDLE_IDENTIFIER: com.andrewgould.Runout
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Runout
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Runout needs access to an audio input device to record from your turntable or phono preamp."
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright (c) 2026 Andrew Gould. MIT License."
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Sources/Platform/macOS/Runout.entitlements
+
+  RunoutiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/Runout
+      - path: Sources/Resources
+    settings:
+      base:
+        PRODUCT_NAME: Runout
+        PRODUCT_BUNDLE_IDENTIFIER: com.andrewgould.Runout
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "2"
+        SUPPORTS_MACCATALYST: NO
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Runout
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Runout needs access to an audio input device to record from your turntable or phono preamp."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+
+  RunoutMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/RunoutTests
+    dependencies:
+      - target: RunoutMac
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.andrewgould.RunoutTests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Runout.app/Contents/MacOS/Runout"
+        BUNDLE_LOADER: "$(TEST_HOST)"
