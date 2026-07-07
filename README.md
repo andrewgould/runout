@@ -31,7 +31,7 @@ See [`docs/FEATURES.md`](docs/FEATURES.md) for the full feature spec, including 
 
 ## Status
 
-This repository currently contains the design docs and visual assets only — no Xcode project yet. Setting one up per [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) is milestone M0 in [`docs/ROADMAP.md`](docs/ROADMAP.md), which also lists every milestone after it with acceptance criteria.
+M0 (project scaffolding) is done: the app builds and runs a placeholder window on both macOS and iPadOS, with CI green. Everything else — recording, waveform editing, tagging, export — is still ahead; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the milestone-by-milestone plan and acceptance criteria.
 
 ## Documentation
 
@@ -46,11 +46,18 @@ This repository currently contains the design docs and visual assets only — no
 
 - macOS 14+ and/or iPadOS 17+
 - Xcode 16+
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — the Xcode project is generated from `project.yml`, not committed, so it never goes stale or produces merge conflicts
 - A turntable feeding a line-level, RIAA-corrected signal into a Core Audio input device (e.g. via a USB turntable or a turntable through a separate phono preamp)
 
 ## Building
 
-No Xcode project exists yet — see "Status" above. Once M0 is done: open `Runout.xcodeproj` in Xcode, select the Runout scheme, and run. No external dependencies to install — FLAC read/write is native via Core Audio (see `docs/ARCHITECTURE.md` for why).
+```
+brew install xcodegen   # once
+xcodegen generate       # regenerate Runout.xcodeproj from project.yml after every pull or project.yml change
+open Runout.xcodeproj
+```
+
+Select the `RunoutMac` scheme to run on your Mac, or `RunoutiOS` to run on an iPad/iPad simulator. No other external dependencies to install — FLAC read/write is native via Core Audio (see `docs/ARCHITECTURE.md` for why).
 
 ## Contributing
 
