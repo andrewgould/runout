@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1280" height="800" fill="#1b1c20"/>
+
+  <!-- nav rail -->
+  <rect x="0" y="0" width="84" height="800" fill="#101114"/>
+  <circle cx="42" cy="64" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <circle cx="42" cy="140" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <circle cx="42" cy="210" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <circle cx="42" cy="280" r="22" fill="#e8a33d"/>
+  <text x="42" y="285" font-size="9" fill="#1b1c20" text-anchor="middle" font-weight="bold">EXPORT</text>
+
+  <text x="120" y="52" font-size="22" fill="#e9eaed" font-weight="bold">Export — Abbey Road</text>
+
+  <!-- destination -->
+  <text x="120" y="90" font-size="12" fill="#9a9ba3">Destination Folder</text>
+  <rect x="120" y="98" width="760" height="32" rx="4" fill="#232429" stroke="#37383f"/>
+  <text x="134" y="119" font-size="13" fill="#e9eaed">~/Music/Runout/Abbey Road</text>
+  <rect x="892" y="98" width="100" height="32" rx="4" fill="#37383f"/>
+  <text x="942" y="119" font-size="12" fill="#e9eaed" text-anchor="middle">Choose…</text>
+
+  <!-- template -->
+  <text x="120" y="152" font-size="12" fill="#9a9ba3">Filename Template</text>
+  <rect x="120" y="160" width="500" height="32" rx="4" fill="#232429" stroke="#37383f"/>
+  <text x="134" y="181" font-size="13" fill="#e9eaed" font-family="monospace">{trackNumber} - {title}</text>
+  <g font-size="11" fill="#c7c8cd">
+    <rect x="632" y="160" width="90" height="32" rx="14" fill="#26272d" stroke="#4a4b53"/>
+    <text x="677" y="181" text-anchor="middle">{artist}</text>
+    <rect x="730" y="160" width="86" height="32" rx="14" fill="#26272d" stroke="#4a4b53"/>
+    <text x="773" y="181" text-anchor="middle">{album}</text>
+    <rect x="824" y="160" width="72" height="32" rx="14" fill="#26272d" stroke="#4a4b53"/>
+    <text x="860" y="181" text-anchor="middle">{year}</text>
+  </g>
+
+  <rect x="960" y="98" width="200" height="94" rx="6" fill="#232429" stroke="#37383f"/>
+  <text x="976" y="122" font-size="11" fill="#9a9ba3">FORMAT</text>
+  <text x="976" y="146" font-size="13" fill="#e9eaed" font-weight="bold">FLAC · lossless</text>
+  <text x="976" y="166" font-size="12" fill="#c7c8cd">24-bit / 96 kHz</text>
+  <text x="976" y="184" font-size="11" fill="#6f7078">passthrough, no re-encode</text>
+
+  <!-- track export list -->
+  <rect x="120" y="216" width="1040" height="420" rx="6" fill="#232429" stroke="#37383f"/>
+  <text x="136" y="242" font-size="11" fill="#9a9ba3">TRACK</text>
+  <text x="900" y="242" font-size="11" fill="#9a9ba3">STATUS</text>
+
+  <g font-size="13" fill="#c7c8cd">
+    <line x1="120" y1="252" x2="1160" y2="252" stroke="#37383f"/>
+    <text x="136" y="278">01 - Come Together.flac</text>
+    <text x="900" y="278" fill="#6fbf73">✓ Done</text>
+
+    <line x1="120" y1="292" x2="1160" y2="292" stroke="#37383f"/>
+    <text x="136" y="318">02 - Something.flac</text>
+    <text x="900" y="318" fill="#6fbf73">✓ Done</text>
+
+    <line x1="120" y1="332" x2="1160" y2="332" stroke="#37383f"/>
+    <text x="136" y="358">03 - Maxwell's Silver Hammer.flac</text>
+    <rect x="900" y="346" width="180" height="10" rx="5" fill="#37383f"/>
+    <rect x="900" y="346" width="110" height="10" rx="5" fill="#e8a33d"/>
+
+    <line x1="120" y1="372" x2="1160" y2="372" stroke="#37383f"/>
+    <text x="136" y="398" fill="#6f7078">04 - Oh! Darling.flac</text>
+    <text x="900" y="398" fill="#6f7078">Queued</text>
+
+    <line x1="120" y1="412" x2="1160" y2="412" stroke="#37383f"/>
+    <text x="136" y="438" fill="#6f7078">05 - Octopus's Garden.flac</text>
+    <text x="900" y="438" fill="#6f7078">Queued</text>
+  </g>
+
+  <!-- footer progress -->
+  <rect x="0" y="700" width="1280" height="100" fill="#151519"/>
+  <text x="120" y="732" font-size="13" fill="#e9eaed">2 of 5 tracks exported</text>
+  <rect x="120" y="742" width="900" height="10" rx="5" fill="#37383f"/>
+  <rect x="120" y="742" width="380" height="10" rx="5" fill="#e8a33d"/>
+  <rect x="1060" y="722" width="100" height="38" rx="6" fill="#e8a33d"/>
+  <text x="1110" y="746" font-size="13" fill="#1b1c20" text-anchor="middle" font-weight="bold">Export All</text>
+</svg>

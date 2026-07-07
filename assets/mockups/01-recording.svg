@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="meterGrad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#e8a33d"/>
+      <stop offset="75%" stop-color="#e8a33d"/>
+      <stop offset="100%" stop-color="#d9534f"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="800" fill="#1b1c20"/>
+
+  <!-- nav rail -->
+  <rect x="0" y="0" width="84" height="800" fill="#101114"/>
+  <circle cx="42" cy="64" r="22" fill="#e8a33d"/>
+  <circle cx="42" cy="64" r="10" fill="#1b1c20"/>
+  <circle cx="42" cy="140" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <circle cx="42" cy="210" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <circle cx="42" cy="280" r="18" fill="none" stroke="#4a4b53" stroke-width="2"/>
+  <text x="42" y="70" font-size="12" fill="#1b1c20" text-anchor="middle" font-weight="bold">REC</text>
+
+  <!-- top bar -->
+  <text x="120" y="52" font-size="22" fill="#e9eaed" font-weight="bold">New Recording — Side A</text>
+  <rect x="900" y="30" width="270" height="36" rx="6" fill="#232429" stroke="#37383f"/>
+  <text x="918" y="53" font-size="14" fill="#c7c8cd">Audio-Technica USB Input ▾</text>
+  <rect x="1180" y="30" width="0" height="0"/>
+  <rect x="120" y="80" width="230" height="26" rx="4" fill="#26272d" stroke="#37383f"/>
+  <text x="132" y="98" font-size="12" fill="#9a9ba3">24-bit · 96 kHz · Stereo</text>
+
+  <!-- level meters -->
+  <text x="120" y="150" font-size="12" fill="#9a9ba3">L</text>
+  <rect x="140" y="140" width="28" height="360" rx="4" fill="#26272d" stroke="#37383f"/>
+  <rect x="142" y="260" width="24" height="238" fill="url(#meterGrad)"/>
+  <text x="120" y="512" font-size="11" fill="#9a9ba3">-3.2 dB</text>
+
+  <text x="190" y="150" font-size="12" fill="#9a9ba3">R</text>
+  <rect x="210" y="140" width="28" height="360" rx="4" fill="#26272d" stroke="#37383f"/>
+  <rect x="212" y="252" width="24" height="246" fill="url(#meterGrad)"/>
+  <text x="195" y="512" font-size="11" fill="#9a9ba3">-2.9 dB</text>
+
+  <circle cx="260" cy="150" r="6" fill="#3a3b42"/>
+  <text x="272" y="155" font-size="11" fill="#6f7078">clip</text>
+
+  <!-- dB scale ticks -->
+  <g stroke="#4a4b53" stroke-width="1">
+    <line x1="120" y1="140" x2="128" y2="140"/>
+    <line x1="120" y1="240" x2="128" y2="240"/>
+    <line x1="120" y1="340" x2="128" y2="340"/>
+    <line x1="120" y1="440" x2="128" y2="440"/>
+  </g>
+  <text x="60" y="144" font-size="10" fill="#6f7078">0</text>
+  <text x="55" y="244" font-size="10" fill="#6f7078">-12</text>
+  <text x="55" y="344" font-size="10" fill="#6f7078">-24</text>
+  <text x="55" y="444" font-size="10" fill="#6f7078">-48</text>
+
+  <!-- transport -->
+  <circle cx="640" cy="300" r="56" fill="#d9534f"/>
+  <circle cx="640" cy="300" r="56" fill="none" stroke="#a83f3c" stroke-width="3"/>
+  <text x="640" y="392" font-size="13" fill="#9a9ba3" text-anchor="middle">Record</text>
+
+  <rect x="740" y="270" width="46" height="60" rx="6" fill="#37383f"/>
+  <text x="763" y="352" font-size="13" fill="#9a9ba3" text-anchor="middle">Pause</text>
+
+  <rect x="820" y="270" width="46" height="60" rx="6" fill="#37383f"/>
+  <text x="843" y="352" font-size="13" fill="#9a9ba3" text-anchor="middle">Stop</text>
+
+  <text x="640" y="230" font-size="40" fill="#e9eaed" text-anchor="middle" font-weight="bold">00:14:32</text>
+
+  <!-- live waveform preview -->
+  <rect x="360" y="560" width="880" height="140" rx="6" fill="#232429" stroke="#37383f"/>
+  <polyline points="380,630 410,610 440,640 470,600 500,650 530,620 560,590 590,635 620,605 650,645 680,615 710,595 740,625 770,610 800,650 830,600 860,630 890,615 920,640 950,605 980,620 1010,595 1040,635 1070,610 1100,650 1130,620 1160,630 1190,600 1220,640" fill="none" stroke="#e8a33d" stroke-width="2" opacity="0.85"/>
+  <line x1="1180" y1="565" x2="1180" y2="695" stroke="#e9eaed" stroke-width="2"/>
+
+  <!-- bottom status bar -->
+  <rect x="0" y="740" width="1280" height="60" fill="#151519"/>
+  <rect x="120" y="758" width="90" height="26" rx="4" fill="#e8a33d"/>
+  <text x="165" y="775" font-size="12" fill="#1b1c20" text-anchor="middle" font-weight="bold">Side A</text>
+  <rect x="220" y="758" width="90" height="26" rx="4" fill="#26272d" stroke="#37383f"/>
+  <text x="265" y="775" font-size="12" fill="#9a9ba3" text-anchor="middle">Side B</text>
+  <text x="1160" y="775" font-size="12" fill="#9a9ba3" text-anchor="end">42 GB free — ~6 hr remaining at current settings</text>
+</svg>

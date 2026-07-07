@@ -1,0 +1,160 @@
+# Data Model
+
+All types below are Swift `struct`s unless noted otherwise, and all conform to `Codable` + `Identifiable` (where they have an `id`) so they serialize directly into the project manifest JSON. Field types are given precisely enough to implement directly — do not guess at alternatives.
+
+## `AudioSettings`
+
+```swift
+struct AudioSettings: Codable {
+    var sampleRate: Double        // e.g. 44100, 48000, 96000, 192000
+    var bitDepth: Int             // 16 or 24
+    var channelCount: Int         // 1 (mono) or 2 (stereo) — see FEATURES.md on mono source handling
+    var inputDeviceUID: String    // persistent Core Audio / AVAudioSession device identifier, not a display name
+}
+```
+
+Default: 24-bit / 96 kHz / stereo. This is the recommended vinyl-ripping default (higher than CD quality headroom for later processing, without going to 192kHz sizes that rarely add audible benefit for this use case).
+
+## `Marker`
+
+```swift
+struct Marker: Codable, Identifiable {
+    var id: UUID
+    var sampleOffset: Int64   // sample-accurate position into the RecordingSide's master file
+    var label: String?        // optional user note, e.g. "false start, keep second attempt"
+}
+```
+
+Markers are stored **sorted by `sampleOffset`** at all times; the editor is responsible for maintaining this invariant on insert/move.
+
+## `Track`
+
+A `Track` is the span between two consecutive markers (or start-of-recording / end-of-recording for the first/last track).
+
+```swift
+struct Track: Codable, Identifiable {
+    var id: UUID
+    var sideID: UUID          // which RecordingSide this track belongs to
+    var startSample: Int64
+    var endSample: Int64
+    var title: String
+    var artist: String?       // nil = inherit AlbumMetadata.albumArtist
+    var trackNumber: Int
+    var discNumber: Int
+    var genre: String?        // nil = inherit AlbumMetadata.genre
+    var year: String?         // nil = inherit AlbumMetadata.year
+    var composer: String?
+    var comment: String?
+}
+```
+
+Deleting a marker merges the two tracks on either side of it into one (the earlier track's metadata wins by default, but the merge should be an explicit, undoable UI action — never silent).
+
+## `AlbumMetadata`
+
+```swift
+struct AlbumMetadata: Codable {
+    var albumTitle: String
+    var albumArtist: String
+    var year: String?
+    var genre: String?
+    var discCount: Int = 1
+    var coverArtRelativePath: String?  // relative path inside the project package, e.g. "artwork.jpg"
+}
+```
+
+## `RecordingSide`
+
+```swift
+struct RecordingSide: Codable, Identifiable {
+    var id: UUID
+    var label: String              // "Side A", "Side B", or user-renamed ("Disc 2 Side A", etc.)
+    var masterFileRelativePath: String   // e.g. "side-a.flac", relative to the project package root
+    var peakCacheRelativePath: String    // e.g. "side-a.peaks", relative to the project package root
+    var durationSamples: Int64
+    var createdAt: Date
+}
+```
+
+## `Project`
+
+The root object serialized to `manifest.json` inside the project package.
+
+```swift
+struct Project: Codable, Identifiable {
+    var id: UUID
+    var name: String
+    var createdAt: Date
+    var modifiedAt: Date
+    var audioSettings: AudioSettings
+    var albumMetadata: AlbumMetadata
+    var sides: [RecordingSide]
+    var tracks: [Track]
+    var schemaVersion: Int = 1   // bump on any breaking manifest format change; loader must check this
+}
+```
+
+### Project package layout (the `.runout` file)
+
+A `.runout` is a directory (a "file package" / "file wrapper" in `FileDocument` terms) with this internal layout:
+
+```
+MyAlbum.runout/
+  manifest.json           — the Project struct, JSON-encoded
+  side-a.flac             — master recording, Side A (full lossless capture, untouched after recording)
+  side-a.peaks            — precomputed waveform peak cache for Side A (see below)
+  side-b.flac
+  side-b.peaks
+  artwork.jpg             — cover art, referenced by AlbumMetadata.coverArtRelativePath
+```
+
+Use SwiftUI's `ReferenceFileDocument` (not `FileDocument`) since project files can be large (tens to hundreds of MB per side) and `ReferenceFileDocument` avoids holding two full copies in memory during save.
+
+### Peak cache format (`.peaks` files)
+
+A simple custom binary format — no need for a general-purpose serialization library:
+
+```
+Header (16 bytes):
+  bytes 0-3:   magic "RPKS" (ASCII)
+  bytes 4-7:   UInt32 LE — version (1)
+  bytes 8-11:  UInt32 LE — samples-per-peak-bucket at the finest resolution (e.g. 256)
+  bytes 12-15: UInt32 LE — number of resolution levels (mip levels), N
+
+For each of the N resolution levels, coarsest-to-finest is not required — store finest-first:
+  UInt32 LE — bucket count at this level
+  followed by that many (Int16 min, Int16 max) pairs (4 bytes each), normalized to Int16 full range
+
+Each coarser level's bucket size doubles (256, 512, 1024, ... samples per bucket), generated by
+merging pairs of the previous level's buckets (min = min of pair, max = max of pair) — do not
+recompute from raw audio per level, derive each level from the one before it.
+```
+
+This gives the waveform view an appropriately-detailed peak array to draw regardless of zoom level without re-scanning the full FLAC file every time the user zooms or scrolls.
+
+## `ExportSettings`
+
+```swift
+struct ExportSettings: Codable {
+    var destinationFolder: URL
+    var fileNameTemplate: String   // e.g. "{trackNumber} - {title}"
+    var overwriteBehavior: OverwriteBehavior
+}
+
+enum OverwriteBehavior: String, Codable {
+    case skip, overwrite, appendNumber   // "01 - Title.flac" -> "01 - Title (2).flac"
+}
+```
+
+### Filename template tokens
+
+| Token | Resolves to |
+|---|---|
+| `{trackNumber}` | `Track.trackNumber`, zero-padded to 2 digits |
+| `{title}` | `Track.title` |
+| `{artist}` | `Track.artist` ?? `AlbumMetadata.albumArtist` |
+| `{album}` | `AlbumMetadata.albumTitle` |
+| `{year}` | `AlbumMetadata.year` ?? "" |
+| `{discNumber}` | `Track.discNumber` |
+
+Default template: `"{trackNumber} - {title}"` → `01 - Come Together.flac`. Sanitize resolved filenames by stripping characters invalid on the target filesystem (`/`, `:`, etc.) before writing.

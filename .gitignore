@@ -1,0 +1,19 @@
+# Xcode / Swift
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+.swiftpm/
+.build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Runout project files (user recordings — never commit these)
+*.runout
