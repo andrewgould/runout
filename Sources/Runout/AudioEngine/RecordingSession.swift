@@ -14,13 +14,14 @@ enum RecordingState: Equatable {
 /// Coordinates the input device, level metering, and file writing behind Screen 1
 /// (docs/UI_SPEC.md). Owns the one `AVAudioEngine` instance for a recording session.
 ///
-/// M1 scope: records at the input device's current native format (see `applyInputDevice`);
-/// explicit sample-rate/bit-depth negotiation is a fast-follow, tracked separately from this
-/// milestone. Native FLAC output (vs. the CAF container used here) lands in M2.
+/// Records native FLAC (see RecordingWriter). Sample rate/channel count follow the input
+/// device's current native format (see `applyInputDevice`); explicit negotiation of those is a
+/// fast-follow. `bitDepth` (16 or 24) is the one format choice already exposed, via `audioSettings`.
 @MainActor
 final class RecordingSession: ObservableObject {
     @Published private(set) var availableDevices: [AudioInputDevice] = []
     @Published var selectedDevice: AudioInputDevice?
+    @Published var audioSettings: AudioSettings = .defaultSettings
     @Published private(set) var state: RecordingState = .idle
     @Published private(set) var channelLevels: [ChannelLevel] = []
     @Published private(set) var elapsedSeconds: TimeInterval = 0
@@ -83,7 +84,7 @@ final class RecordingSession: ObservableObject {
         do {
             try inputManager.applyInputDevice(device, to: engine)
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
-            try await writer.start(url: url, format: inputFormat)
+            try await writer.start(url: url, sourceFormat: inputFormat, bitDepth: audioSettings.bitDepth)
 
             engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
                 guard let self else { return }
