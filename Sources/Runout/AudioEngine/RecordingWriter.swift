@@ -16,14 +16,11 @@ actor RecordingWriter {
     private(set) var framesWritten: AVAudioFramePosition = 0
 
     func start(url: URL, sourceFormat: AVAudioFormat, bitDepth: Int) throws {
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatFLAC,
-            AVSampleRateKey: sourceFormat.sampleRate,
-            AVNumberOfChannelsKey: sourceFormat.channelCount,
-            AVLinearPCMBitDepthKey: bitDepth,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsFloatKey: false,
-        ]
+        let settings = FlacSettings.writingSettings(
+            sampleRate: sourceFormat.sampleRate,
+            channelCount: sourceFormat.channelCount,
+            bitDepth: bitDepth
+        )
         audioFile = try AVAudioFile(
             forWriting: url,
             settings: settings,
