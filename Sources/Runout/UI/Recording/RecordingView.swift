@@ -6,6 +6,8 @@ import SwiftUI
 /// a proper project package (see docs/DATA_MODEL.md) once document-based persistence lands.
 struct RecordingView: View {
     @StateObject private var session = RecordingSession()
+    @State private var currentRecordingURL: URL?
+    var onRecordingFinished: (URL) -> Void = { _ in }
 
     private static let recordingsDirectory: URL = {
         let musicDirectory = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
@@ -95,13 +97,13 @@ struct RecordingView: View {
             case .recording:
                 Button("Pause") { session.pauseRecording() }
                     .buttonStyle(.bordered)
-                Button("Stop") { Task { await session.stopRecording() } }
+                Button("Stop") { Task { await stopRecording() } }
                     .buttonStyle(.borderedProminent)
 
             case .paused:
                 Button("Resume") { session.resumeRecording() }
                     .buttonStyle(.borderedProminent)
-                Button("Stop") { Task { await session.stopRecording() } }
+                Button("Stop") { Task { await stopRecording() } }
                     .buttonStyle(.bordered)
             }
 
@@ -120,7 +122,15 @@ struct RecordingView: View {
         let directory = Self.recordingsDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(recordingFileName())
+        currentRecordingURL = url
         Task { await session.startRecording(to: url) }
+    }
+
+    private func stopRecording() async {
+        await session.stopRecording()
+        if let url = currentRecordingURL {
+            onRecordingFinished(url)
+        }
     }
 
     private func recordingFileName() -> String {
