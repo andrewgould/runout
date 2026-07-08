@@ -20,7 +20,7 @@ struct ContentView: View {
                 case .tag:
                     MetadataView(recordingURL: lastRecordingURL)
                 case .export:
-                    ExportView()
+                    ExportView(recordingURL: lastRecordingURL)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -31,7 +31,7 @@ struct ContentView: View {
     /// Later stages only make sense once there's something for them to work on — see
     /// docs/UI_SPEC.md. Tag/Export land in M5/M6; only Record/Edit exist so far.
     private var enabledSections: Set<AppSection> {
-        lastRecordingURL == nil ? [.record] : [.record, .edit, .tag]
+        lastRecordingURL == nil ? [.record] : [.record, .edit, .tag, .export]
     }
 }
 
