@@ -24,10 +24,6 @@ final class EditorSession: ObservableObject {
     private var player: AVAudioPlayer?
     private var playheadTimer: Timer?
 
-    private var sidecarURL: URL {
-        recordingURL.deletingPathExtension().appendingPathExtension("markers.json")
-    }
-
     init(recordingURL: URL, sampleRate: Double, totalSampleCount: Int64) {
         self.recordingURL = recordingURL
         self.sampleRate = sampleRate
@@ -36,7 +32,7 @@ final class EditorSession: ObservableObject {
         // on the default event-loop-based grouping, which would silently merge unrelated edits
         // into one undo step if they happen to land in the same run loop turn.
         undoManager.groupsByEvent = false
-        loadMarkers()
+        markers = MarkerSidecarStore.load(forRecordingAt: recordingURL)
         preparePlayer()
     }
 
@@ -51,16 +47,8 @@ final class EditorSession: ObservableObject {
 
     // MARK: - Persistence
 
-    private func loadMarkers() {
-        guard let data = try? Data(contentsOf: sidecarURL),
-              let decoded = try? JSONDecoder().decode([Marker].self, from: data)
-        else { return }
-        markers = decoded.sorted { $0.sampleOffset < $1.sampleOffset }
-    }
-
     private func saveMarkers() {
-        guard let data = try? JSONEncoder().encode(markers) else { return }
-        try? data.write(to: sidecarURL, options: .atomic)
+        MarkerSidecarStore.save(markers, forRecordingAt: recordingURL)
     }
 
     // MARK: - Marker editing
