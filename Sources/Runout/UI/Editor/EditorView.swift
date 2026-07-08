@@ -3,19 +3,24 @@ import SwiftUI
 
 /// Screen 2 — see docs/UI_SPEC.md and assets/mockups/02-waveform-editor.png.
 struct EditorView: View {
-    let recordingURL: URL?
+    @ObservedObject var document: RunoutDocument
+    let sideID: UUID?
 
     @State private var peakCache: PeakCache?
     @State private var sampleRate: Double?
     @State private var totalSampleCount: Int64?
+    @State private var recordingFileURL: URL?
     @State private var errorMessage: String?
+    @State private var loadedForSideID: UUID?
 
     var body: some View {
         Group {
-            if let recordingURL {
-                if let peakCache, let sampleRate, let totalSampleCount {
+            if let sideID, let side = document.project.sides.first(where: { $0.id == sideID }) {
+                if loadedForSideID == sideID, let peakCache, let sampleRate, let totalSampleCount, let recordingFileURL {
                     EditorWorkspaceView(
-                        recordingURL: recordingURL,
+                        document: document,
+                        sideID: sideID,
+                        recordingFileURL: recordingFileURL,
                         peakCache: peakCache,
                         sampleRate: sampleRate,
                         totalSampleCount: totalSampleCount
@@ -29,8 +34,8 @@ struct EditorView: View {
                 } else {
                     ProgressView("Analyzing waveform…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .task(id: recordingURL) {
-                            await loadWaveform(for: recordingURL)
+                        .task(id: sideID) {
+                            await loadWaveform(for: side)
                         }
                 }
             } else {
@@ -43,16 +48,19 @@ struct EditorView: View {
         }
     }
 
-    private func loadWaveform(for url: URL) async {
+    private func loadWaveform(for side: RecordingSide) async {
         do {
+            let fileURL = try document.materializedFileURL(forRelativePath: side.masterFileRelativePath)
             let (cache, rate, length) = try await Task.detached(priority: .userInitiated) { () -> (PeakCache, Double, Int64) in
-                let cache = try PeakCacheBuilder.build(fromFileAt: url)
-                let file = try AVAudioFile(forReading: url)
+                let cache = try PeakCacheBuilder.build(fromFileAt: fileURL)
+                let file = try AVAudioFile(forReading: fileURL)
                 return (cache, file.processingFormat.sampleRate, file.length)
             }.value
+            recordingFileURL = fileURL
             peakCache = cache
             sampleRate = rate
             totalSampleCount = length
+            loadedForSideID = side.id
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -62,28 +70,38 @@ struct EditorView: View {
 /// Split out so `EditorSession` (a `@StateObject`) can be constructed once, directly from data
 /// that's only available after `EditorView`'s async waveform load completes.
 private struct EditorWorkspaceView: View {
-    let recordingURL: URL
+    let document: RunoutDocument
+    let sideID: UUID
+    let recordingFileURL: URL
     let peakCache: PeakCache
     let sampleRate: Double
     let totalSampleCount: Int64
 
     @StateObject private var session: EditorSession
 
-    init(recordingURL: URL, peakCache: PeakCache, sampleRate: Double, totalSampleCount: Int64) {
-        self.recordingURL = recordingURL
+    init(document: RunoutDocument, sideID: UUID, recordingFileURL: URL, peakCache: PeakCache, sampleRate: Double, totalSampleCount: Int64) {
+        self.document = document
+        self.sideID = sideID
+        self.recordingFileURL = recordingFileURL
         self.peakCache = peakCache
         self.sampleRate = sampleRate
         self.totalSampleCount = totalSampleCount
         _session = StateObject(wrappedValue: EditorSession(
-            recordingURL: recordingURL,
+            document: document,
+            sideID: sideID,
+            recordingFileURL: recordingFileURL,
             sampleRate: sampleRate,
             totalSampleCount: totalSampleCount
         ))
     }
 
+    private var sideLabel: String {
+        document.project.sides.first(where: { $0.id == sideID })?.label ?? "Recording"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(recordingURL.lastPathComponent)
+            Text(sideLabel)
                 .font(.title2.bold())
 
             toolbar

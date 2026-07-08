@@ -1,23 +1,23 @@
+import AVFoundation
 import SwiftUI
 
 /// Screen 1 — see docs/UI_SPEC.md and assets/mockups/01-recording.png.
 ///
-/// M1 scope: records to a fixed location under the user's Music folder. M7 replaces this with
-/// a proper project package (see docs/DATA_MODEL.md) once document-based persistence lands.
+/// Recording is written to a document-owned scratch location, then ingested into the project
+/// package as a new `RecordingSide` once it finishes — see `RunoutDocument`'s materialize/ingest
+/// bridge for why the actual audio capture code (`RecordingSession`, unchanged since M1) still
+/// just deals in plain file URLs.
 struct RecordingView: View {
+    @ObservedObject var document: RunoutDocument
     @StateObject private var session = RecordingSession()
-    @State private var currentRecordingURL: URL?
-    var onRecordingFinished: (URL) -> Void = { _ in }
-
-    private static let recordingsDirectory: URL = {
-        let musicDirectory = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return musicDirectory.appendingPathComponent("Runout", isDirectory: true)
-    }()
+    @State private var currentScratchURL: URL?
+    @State private var pendingSide: (slug: String, label: String)?
+    @State private var ingestError: String?
+    var onRecordingFinished: (UUID) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("New Recording")
+            Text("New Recording — \(nextSideLabel)")
                 .font(.title.bold())
 
             devicePicker
@@ -36,6 +36,11 @@ struct RecordingView: View {
                     .foregroundStyle(.red)
                     .font(.footnote)
             }
+            if let ingestError {
+                Label(ingestError, systemImage: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+                    .font(.footnote)
+            }
 
             Spacer()
         }
@@ -43,7 +48,7 @@ struct RecordingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             session.refreshDevices()
-            session.checkDiskSpace(at: Self.recordingsDirectory, settings: .defaultSettings)
+            session.checkDiskSpace(at: document.workingDirectory, settings: .defaultSettings)
         }
     }
 
@@ -118,25 +123,51 @@ struct RecordingView: View {
         return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }
 
+    private func slugAndLabel(forSideIndex index: Int) -> (slug: String, label: String) {
+        let letter = String(UnicodeScalar(UInt8(65 + min(index, 25))))
+        return ("side-\(letter.lowercased())", "Side \(letter)")
+    }
+
+    private var nextSideLabel: String {
+        slugAndLabel(forSideIndex: document.project.sides.count).label
+    }
+
     private func startRecording() {
-        let directory = Self.recordingsDirectory
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent(recordingFileName())
-        currentRecordingURL = url
+        let pending = slugAndLabel(forSideIndex: document.project.sides.count)
+        pendingSide = pending
+        let url = document.scratchFileURL(named: "\(pending.slug).flac")
+        currentScratchURL = url
         Task { await session.startRecording(to: url) }
     }
 
     private func stopRecording() async {
         await session.stopRecording()
-        if let url = currentRecordingURL {
-            onRecordingFinished(url)
-        }
-    }
+        guard let url = currentScratchURL, let pending = pendingSide else { return }
+        currentScratchURL = nil
+        pendingSide = nil
 
-    private func recordingFileName() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        return "Recording \(formatter.string(from: Date())).flac"
+        do {
+            let audioFile = try AVAudioFile(forReading: url)
+            let peakCache = try PeakCacheBuilder.build(fromFileAt: url)
+            let peaksURL = document.scratchFileURL(named: "\(pending.slug).peaks")
+            try peakCache.serialized().write(to: peaksURL, options: .atomic)
+
+            try document.ingestFile(at: url, asRelativePath: "\(pending.slug).flac")
+            try document.ingestFile(at: peaksURL, asRelativePath: "\(pending.slug).peaks")
+
+            let side = RecordingSide(
+                label: pending.label,
+                masterFileRelativePath: "\(pending.slug).flac",
+                peakCacheRelativePath: "\(pending.slug).peaks",
+                durationSamples: audioFile.length,
+                createdAt: Date()
+            )
+            document.project.sides.append(side)
+            ingestError = nil
+            onRecordingFinished(side.id)
+        } catch {
+            ingestError = "Couldn't save the recording into the project: \(error.localizedDescription)"
+        }
     }
 }
 
