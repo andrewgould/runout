@@ -182,9 +182,7 @@ private struct EditorWorkspaceView: View {
     }
 
     private func trackRanges() -> [Range<Int64>] {
-        let boundaries: [Int64] = [0] + session.markers.map(\.sampleOffset).sorted() + [totalSampleCount]
-        guard boundaries.count > 1 else { return [] }
-        return (0..<boundaries.count - 1).map { boundaries[$0]..<boundaries[$0 + 1] }
+        TrackRanges.compute(markers: session.markers, totalSampleCount: totalSampleCount)
     }
 
     private func timeString(forSample sample: Int64) -> String {
