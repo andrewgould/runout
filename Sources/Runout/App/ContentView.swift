@@ -1,8 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var document: RunoutDocument
     @State private var selection: AppSection = .record
-    @State private var lastRecordingURL: URL?
+    @State private var selectedSideID: UUID?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -11,30 +12,35 @@ struct ContentView: View {
             Group {
                 switch selection {
                 case .record:
-                    RecordingView(onRecordingFinished: { url in
-                        lastRecordingURL = url
+                    RecordingView(document: document, onRecordingFinished: { sideID in
+                        selectedSideID = sideID
                         selection = .edit
                     })
                 case .edit:
-                    EditorView(recordingURL: lastRecordingURL)
+                    EditorView(document: document, sideID: selectedSideID)
                 case .tag:
-                    MetadataView(recordingURL: lastRecordingURL)
+                    MetadataView(document: document, sideID: selectedSideID)
                 case .export:
-                    ExportView(recordingURL: lastRecordingURL)
+                    ExportView(document: document, sideID: selectedSideID)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 720, minHeight: 480)
+        .onAppear {
+            if selectedSideID == nil {
+                selectedSideID = document.project.sides.first?.id
+            }
+        }
     }
 
     /// Later stages only make sense once there's something for them to work on — see
-    /// docs/UI_SPEC.md. Tag/Export land in M5/M6; only Record/Edit exist so far.
+    /// docs/UI_SPEC.md.
     private var enabledSections: Set<AppSection> {
-        lastRecordingURL == nil ? [.record] : [.record, .edit, .tag, .export]
+        selectedSideID == nil ? [.record] : [.record, .edit, .tag, .export]
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(document: RunoutDocument())
 }

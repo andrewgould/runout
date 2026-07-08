@@ -2,58 +2,44 @@ import Foundation
 
 /// Coordinates album/track metadata and cover art behind Screen 3 (docs/UI_SPEC.md).
 ///
-/// Persistence note: like `EditorSession`'s markers, this saves to a
-/// `<recording>.metadata.json` sidecar — a temporary bridge until M7's real `.runout` project
-/// package lands. Track sample ranges come from the same marker sidecar `EditorSession` writes
-/// (via `MarkerSidecarStore` + `TrackRanges`), so this reads the *current* split even if it was
-/// last edited in a previous app launch, without needing a live `EditorSession` instance.
+/// Album metadata and per-side tracks now live directly in `document.project` — the
+/// `<recording>.metadata.json` sidecar used as a temporary bridge in M5 is gone. `tracks` here is
+/// a working copy for just this side, kept in sync by `pushTracksToDocument` writing straight
+/// through to `document.project.tracks` (merged back in alongside any other sides' tracks) on
+/// every mutation.
 @MainActor
 final class MetadataSession: ObservableObject {
     @Published var albumMetadata: AlbumMetadata {
-        didSet { save() }
+        didSet { document.project.albumMetadata = albumMetadata }
     }
     @Published private(set) var tracks: [Track]
     @Published private(set) var coverArtURL: URL?
     @Published private(set) var errorMessage: String?
 
-    let recordingURL: URL
+    private let document: RunoutDocument
     private let sideID: UUID
 
-    private struct PersistedState: Codable {
-        var sideID: UUID
-        var albumMetadata: AlbumMetadata
-        var tracks: [Track]
-        var coverArtRelativeFilename: String?
-    }
+    init(document: RunoutDocument, sideID: UUID, totalSampleCount: Int64) {
+        self.document = document
+        self.sideID = sideID
 
-    private var sidecarURL: URL {
-        recordingURL.deletingPathExtension().appendingPathExtension("metadata.json")
-    }
-
-    init(recordingURL: URL, totalSampleCount: Int64) {
-        self.recordingURL = recordingURL
-        let markers = MarkerSidecarStore.load(forRecordingAt: recordingURL)
+        let markers = document.project.sides.first(where: { $0.id == sideID })?.markers ?? []
         let ranges = TrackRanges.compute(markers: markers, totalSampleCount: totalSampleCount)
+        let existingTracksForSide = document.project.tracks.filter { $0.sideID == sideID }
+        let reconciled = Self.reconcile(existingTracksForSide, with: ranges, sideID: sideID)
 
-        if let data = try? Data(contentsOf: MetadataSession.sidecarURL(for: recordingURL)),
-           let persisted = try? JSONDecoder().decode(PersistedState.self, from: data) {
-            self.sideID = persisted.sideID
-            self.albumMetadata = persisted.albumMetadata
-            self.tracks = MetadataSession.reconcile(persisted.tracks, with: ranges, sideID: persisted.sideID)
-            if let filename = persisted.coverArtRelativeFilename {
-                let url = recordingURL.deletingLastPathComponent().appendingPathComponent(filename)
-                self.coverArtURL = FileManager.default.fileExists(atPath: url.path) ? url : nil
-            }
-        } else {
-            self.sideID = UUID()
-            self.albumMetadata = AlbumMetadata()
-            self.tracks = MetadataSession.makeDefaultTracks(from: ranges, sideID: sideID)
+        self.albumMetadata = document.project.albumMetadata
+        self.tracks = reconciled
+
+        if let path = document.project.albumMetadata.coverArtRelativePath,
+           let url = try? document.materializedFileURL(forRelativePath: path) {
+            self.coverArtURL = url
         }
-        save()
-    }
 
-    private static func sidecarURL(for recordingURL: URL) -> URL {
-        recordingURL.deletingPathExtension().appendingPathExtension("metadata.json")
+        var all = document.project.tracks
+        all.removeAll { $0.sideID == sideID }
+        all.append(contentsOf: reconciled)
+        document.project.tracks = all
     }
 
     /// Rebuilds the track list from the current marker-derived ranges, preserving existing
@@ -71,10 +57,6 @@ final class MetadataSession: ObservableObject {
         }
     }
 
-    private static func makeDefaultTracks(from ranges: [Range<Int64>], sideID: UUID) -> [Track] {
-        ranges.enumerated().map { index, range in defaultTrack(range: range, number: index + 1, sideID: sideID) }
-    }
-
     private static func defaultTrack(range: Range<Int64>, number: Int, sideID: UUID) -> Track {
         Track(sideID: sideID, startSample: range.lowerBound, endSample: range.upperBound, title: "Track \(number)", trackNumber: number)
     }
@@ -84,7 +66,7 @@ final class MetadataSession: ObservableObject {
     func updateTrack(_ id: UUID, mutate: (inout Track) -> Void) {
         guard let index = tracks.firstIndex(where: { $0.id == id }) else { return }
         mutate(&tracks[index])
-        save()
+        pushTracksToDocument()
     }
 
     /// Clears per-track artist/genre/year overrides so every track inherits the album's values —
@@ -95,7 +77,7 @@ final class MetadataSession: ObservableObject {
             tracks[index].genre = nil
             tracks[index].year = nil
         }
-        save()
+        pushTracksToDocument()
     }
 
     func resolvedFilename(for track: Track, template: String = FileNameTemplate.defaultTemplate) -> String {
@@ -122,26 +104,22 @@ final class MetadataSession: ObservableObject {
     }
 
     private func storeCoverArt(_ data: Data, fileExtension: String) throws {
-        let filename = recordingURL.deletingPathExtension().lastPathComponent + ".artwork." + fileExtension
-        let destination = recordingURL.deletingLastPathComponent().appendingPathComponent(filename)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            try FileManager.default.removeItem(at: destination)
-        }
-        try data.write(to: destination, options: .atomic)
-        coverArtURL = destination
-        save()
+        let relativePath = "artwork.\(fileExtension)"
+        let scratchURL = document.scratchFileURL(named: "artwork-\(UUID().uuidString).\(fileExtension)")
+        try data.write(to: scratchURL, options: .atomic)
+        try document.ingestFile(at: scratchURL, asRelativePath: relativePath)
+        try? FileManager.default.removeItem(at: scratchURL)
+
+        albumMetadata.coverArtRelativePath = relativePath
+        coverArtURL = try document.materializedFileURL(forRelativePath: relativePath)
     }
 
     // MARK: - Persistence
 
-    private func save() {
-        let state = PersistedState(
-            sideID: sideID,
-            albumMetadata: albumMetadata,
-            tracks: tracks,
-            coverArtRelativeFilename: coverArtURL?.lastPathComponent
-        )
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: sidecarURL, options: .atomic)
+    private func pushTracksToDocument() {
+        var all = document.project.tracks
+        all.removeAll { $0.sideID == sideID }
+        all.append(contentsOf: tracks)
+        document.project.tracks = all
     }
 }

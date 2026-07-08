@@ -22,11 +22,8 @@ targets:
         PRODUCT_NAME: Runout
         PRODUCT_BUNDLE_IDENTIFIER: com.andrewgould.Runout
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Runout
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Runout needs access to an audio input device to record from your turntable or phono preamp."
-        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright (c) 2026 Andrew Gould. MIT License."
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/Platform/macOS/Info.plist
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_ENTITLEMENTS: Sources/Platform/macOS/Runout.entitlements
 
@@ -44,12 +41,8 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "2"
         SUPPORTS_MACCATALYST: NO
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Runout
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Runout needs access to an audio input device to record from your turntable or phono preamp."
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Sources/Platform/iOS/Info.plist
 
   RunoutMacTests:
     type: bundle.unit-test

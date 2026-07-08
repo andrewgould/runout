@@ -4,24 +4,24 @@ import UniformTypeIdentifiers
 
 /// Screen 3 — see docs/UI_SPEC.md and assets/mockups/03-metadata.png.
 struct MetadataView: View {
-    let recordingURL: URL?
+    @ObservedObject var document: RunoutDocument
+    let sideID: UUID?
 
     @State private var totalSampleCount: Int64?
     @State private var errorMessage: String?
+    @State private var loadedForSideID: UUID?
 
     var body: some View {
         Group {
-            if let recordingURL {
-                if let totalSampleCount {
-                    MetadataWorkspaceView(recordingURL: recordingURL, totalSampleCount: totalSampleCount)
+            if let sideID, let side = document.project.sides.first(where: { $0.id == sideID }) {
+                if loadedForSideID == sideID, let totalSampleCount {
+                    MetadataWorkspaceView(document: document, sideID: sideID, totalSampleCount: totalSampleCount)
                 } else if let errorMessage {
                     PlaceholderScreen(title: "Couldn't Load Recording", systemImage: "exclamationmark.triangle", message: errorMessage)
                 } else {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .task(id: recordingURL) {
-                            await loadTotalSampleCount(for: recordingURL)
-                        }
+                        .task(id: sideID) { await load(for: side) }
                 }
             } else {
                 PlaceholderScreen(
@@ -33,12 +33,14 @@ struct MetadataView: View {
         }
     }
 
-    private func loadTotalSampleCount(for url: URL) async {
+    private func load(for side: RecordingSide) async {
         do {
+            let fileURL = try document.materializedFileURL(forRelativePath: side.masterFileRelativePath)
             let length = try await Task.detached(priority: .userInitiated) {
-                try AVAudioFile(forReading: url).length
+                try AVAudioFile(forReading: fileURL).length
             }.value
             totalSampleCount = length
+            loadedForSideID = side.id
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -46,17 +48,19 @@ struct MetadataView: View {
 }
 
 private struct MetadataWorkspaceView: View {
-    let recordingURL: URL
+    let document: RunoutDocument
+    let sideID: UUID
     let totalSampleCount: Int64
 
     @StateObject private var session: MetadataSession
     @State private var selectedTrackID: UUID?
     @State private var isImportingCoverArt = false
 
-    init(recordingURL: URL, totalSampleCount: Int64) {
-        self.recordingURL = recordingURL
+    init(document: RunoutDocument, sideID: UUID, totalSampleCount: Int64) {
+        self.document = document
+        self.sideID = sideID
         self.totalSampleCount = totalSampleCount
-        _session = StateObject(wrappedValue: MetadataSession(recordingURL: recordingURL, totalSampleCount: totalSampleCount))
+        _session = StateObject(wrappedValue: MetadataSession(document: document, sideID: sideID, totalSampleCount: totalSampleCount))
     }
 
     private var selectedTrack: Track? {

@@ -5,17 +5,18 @@ import XCTest
 @MainActor
 final class EditorSessionTests: XCTestCase {
     private var fileURL: URL!
-    private var sampleRate: Double = 48_000
-    private var totalSampleCount: Int64 = 48_000 // 1 second
+    private var document: RunoutDocument!
+    private var sideID: UUID!
+    private let sampleRate: Double = 48_000
+    private let totalSampleCount: Int64 = 48_000 // 1 second
 
     override func setUp() async throws {
         try await super.setUp()
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
             return XCTFail("Could not construct format")
         }
-        fileURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("flac")
+        document = RunoutDocument()
+        fileURL = document.scratchFileURL(named: "side-a.flac")
 
         let writer = RecordingWriter()
         try await writer.start(url: fileURL, sourceFormat: format, bitDepth: 24)
@@ -32,17 +33,26 @@ final class EditorSessionTests: XCTestCase {
         guard let copy = buffer.copy() else { return XCTFail("Could not copy buffer") }
         try await writer.append(copy)
         await writer.stop()
+
+        try document.ingestFile(at: fileURL, asRelativePath: "side-a.flac")
+        let side = RecordingSide(
+            label: "Side A",
+            masterFileRelativePath: "side-a.flac",
+            peakCacheRelativePath: "side-a.peaks",
+            durationSamples: totalSampleCount,
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        sideID = side.id
+        document.project.sides = [side]
     }
 
     override func tearDown() async throws {
         try? FileManager.default.removeItem(at: fileURL)
-        let sidecar = fileURL.deletingPathExtension().appendingPathExtension("markers.json")
-        try? FileManager.default.removeItem(at: sidecar)
         try await super.tearDown()
     }
 
     private func makeSession() -> EditorSession {
-        EditorSession(recordingURL: fileURL, sampleRate: sampleRate, totalSampleCount: totalSampleCount)
+        EditorSession(document: document, sideID: sideID, recordingFileURL: fileURL, sampleRate: sampleRate, totalSampleCount: totalSampleCount)
     }
 
     func testAddMarkerWithoutSnappingUsesExactSample() {
@@ -114,15 +124,18 @@ final class EditorSessionTests: XCTestCase {
         XCTAssertEqual(session.markers.map(\.sampleOffset), [20000])
     }
 
-    func testMarkersPersistAcrossSessionInstances() {
+    /// Markers are written straight through to `document.project.sides[i].markers` on every
+    /// mutation (see `EditorSession.saveMarkers()`) — a second session reading the same document
+    /// sees them immediately, and (per `RunoutDocumentTests`) that `Project` round-trips through
+    /// real disk I/O losslessly, so together these confirm markers genuinely persist.
+    func testMarkersAreVisibleToASecondSessionReadingTheSameDocument() {
         let session = makeSession()
         session.snapToZeroCrossing = false
         session.addMarker(atSample: 5000)
         session.addMarker(atSample: 15000)
 
-        // A fresh EditorSession pointing at the same recording simulates an app relaunch.
-        let reloaded = makeSession()
-        XCTAssertEqual(reloaded.markers.map(\.sampleOffset), [5000, 15000])
+        let secondSession = makeSession()
+        XCTAssertEqual(secondSession.markers.map(\.sampleOffset), [5000, 15000])
     }
 
     func testSplitAtPlayheadAddsMarkerAtCurrentPlayhead() {

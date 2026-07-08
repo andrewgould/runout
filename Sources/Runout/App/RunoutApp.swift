@@ -3,8 +3,8 @@ import SwiftUI
 @main
 struct RunoutApp: App {
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        DocumentGroup(newDocument: { RunoutDocument() }) { configuration in
+            ContentView(document: configuration.document)
         }
     }
 }

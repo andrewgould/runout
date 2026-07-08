@@ -4,23 +4,32 @@ import UniformTypeIdentifiers
 
 /// Screen 4 — see docs/UI_SPEC.md and assets/mockups/04-export.png.
 struct ExportView: View {
-    let recordingURL: URL?
+    @ObservedObject var document: RunoutDocument
+    let sideID: UUID?
 
     @State private var totalSampleCount: Int64?
     @State private var bitDepth: Int?
+    @State private var recordingFileURL: URL?
     @State private var errorMessage: String?
+    @State private var loadedForSideID: UUID?
 
     var body: some View {
         Group {
-            if let recordingURL {
-                if let totalSampleCount, let bitDepth {
-                    ExportWorkspaceView(recordingURL: recordingURL, totalSampleCount: totalSampleCount, bitDepth: bitDepth)
+            if let sideID, let side = document.project.sides.first(where: { $0.id == sideID }) {
+                if loadedForSideID == sideID, let totalSampleCount, let bitDepth, let recordingFileURL {
+                    ExportWorkspaceView(
+                        document: document,
+                        sideID: sideID,
+                        recordingFileURL: recordingFileURL,
+                        totalSampleCount: totalSampleCount,
+                        bitDepth: bitDepth
+                    )
                 } else if let errorMessage {
                     PlaceholderScreen(title: "Couldn't Load Recording", systemImage: "exclamationmark.triangle", message: errorMessage)
                 } else {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .task(id: recordingURL) { await load(for: recordingURL) }
+                        .task(id: sideID) { await load(for: side) }
                 }
             } else {
                 PlaceholderScreen(
@@ -32,15 +41,18 @@ struct ExportView: View {
         }
     }
 
-    private func load(for url: URL) async {
+    private func load(for side: RecordingSide) async {
         do {
+            let fileURL = try document.materializedFileURL(forRelativePath: side.masterFileRelativePath)
             let (length, depth) = try await Task.detached(priority: .userInitiated) { () -> (Int64, Int) in
-                let file = try AVAudioFile(forReading: url)
+                let file = try AVAudioFile(forReading: fileURL)
                 let depth = file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int ?? 24
                 return (file.length, depth)
             }.value
+            recordingFileURL = fileURL
             totalSampleCount = length
             bitDepth = depth
+            loadedForSideID = side.id
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -48,7 +60,9 @@ struct ExportView: View {
 }
 
 private struct ExportWorkspaceView: View {
-    let recordingURL: URL
+    let document: RunoutDocument
+    let sideID: UUID
+    let recordingFileURL: URL
     let totalSampleCount: Int64
     let bitDepth: Int
 
@@ -56,14 +70,16 @@ private struct ExportWorkspaceView: View {
     @StateObject private var session: ExportSession
     @State private var isChoosingDestination = false
 
-    init(recordingURL: URL, totalSampleCount: Int64, bitDepth: Int) {
-        self.recordingURL = recordingURL
+    init(document: RunoutDocument, sideID: UUID, recordingFileURL: URL, totalSampleCount: Int64, bitDepth: Int) {
+        self.document = document
+        self.sideID = sideID
+        self.recordingFileURL = recordingFileURL
         self.totalSampleCount = totalSampleCount
         self.bitDepth = bitDepth
-        let metadataSession = MetadataSession(recordingURL: recordingURL, totalSampleCount: totalSampleCount)
+        let metadataSession = MetadataSession(document: document, sideID: sideID, totalSampleCount: totalSampleCount)
         _metadata = StateObject(wrappedValue: metadataSession)
         _session = StateObject(wrappedValue: ExportSession(
-            recordingURL: recordingURL,
+            recordingURL: recordingFileURL,
             bitDepth: bitDepth,
             tracks: metadataSession.tracks,
             albumMetadata: metadataSession.albumMetadata,

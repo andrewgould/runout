@@ -3,72 +3,74 @@ import XCTest
 
 @MainActor
 final class MetadataSessionTests: XCTestCase {
-    private var recordingURL: URL!
+    private var document: RunoutDocument!
+    private var sideID: UUID!
 
     override func setUp() {
         super.setUp()
-        recordingURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("flac")
+        document = RunoutDocument()
+        let side = RecordingSide(
+            label: "Side A",
+            masterFileRelativePath: "side-a.flac",
+            peakCacheRelativePath: "side-a.peaks",
+            durationSamples: 1000,
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        sideID = side.id
+        document.project.sides = [side]
     }
 
     override func tearDown() {
-        let base = recordingURL!
-        for ext in ["markers.json", "metadata.json"] {
-            try? FileManager.default.removeItem(at: base.deletingPathExtension().appendingPathExtension(ext))
-        }
-        let coverArtGlobPrefix = base.deletingPathExtension().lastPathComponent + ".artwork."
-        let directory = base.deletingLastPathComponent()
-        if let contents = try? FileManager.default.contentsOfDirectory(atPath: directory.path) {
-            for name in contents where name.hasPrefix(coverArtGlobPrefix) {
-                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
-            }
-        }
+        try? FileManager.default.removeItem(at: document.workingDirectory)
         super.tearDown()
     }
 
     private func writeMarkers(_ sampleOffsets: [Int64]) {
-        let markers = sampleOffsets.map { Marker(sampleOffset: $0) }
-        MarkerSidecarStore.save(markers, forRecordingAt: recordingURL)
+        guard let index = document.project.sides.firstIndex(where: { $0.id == sideID }) else { return }
+        document.project.sides[index].markers = sampleOffsets.map { Marker(sampleOffset: $0) }
+    }
+
+    private func makeSession(totalSampleCount: Int64 = 1000) -> MetadataSession {
+        MetadataSession(document: document, sideID: sideID, totalSampleCount: totalSampleCount)
     }
 
     func testDefaultTracksMatchMarkerDerivedRanges() {
         writeMarkers([300, 700])
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         XCTAssertEqual(session.tracks.map { $0.startSample..<$0.endSample }, [0..<300, 300..<700, 700..<1000])
         XCTAssertEqual(session.tracks.map(\.trackNumber), [1, 2, 3])
         XCTAssertEqual(session.tracks.map(\.title), ["Track 1", "Track 2", "Track 3"])
     }
 
     func testAlbumMetadataPersistsAcrossSessionInstances() {
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         session.albumMetadata.albumTitle = "Abbey Road"
         session.albumMetadata.albumArtist = "The Beatles"
 
-        let reloaded = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let reloaded = makeSession()
         XCTAssertEqual(reloaded.albumMetadata.albumTitle, "Abbey Road")
         XCTAssertEqual(reloaded.albumMetadata.albumArtist, "The Beatles")
     }
 
     func testUpdateTrackPersistsAcrossSessionInstances() {
         writeMarkers([500])
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         let id = session.tracks[0].id
         session.updateTrack(id) { $0.title = "Come Together" }
 
-        let reloaded = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let reloaded = makeSession()
         XCTAssertEqual(reloaded.tracks[0].title, "Come Together")
     }
 
     func testReconciliationPreservesMetadataForUnchangedRangesAndDefaultsNewOnes() {
         writeMarkers([500])
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         session.updateTrack(session.tracks[0].id) { $0.title = "Side A, Part 1" }
         session.updateTrack(session.tracks[1].id) { $0.title = "Side A, Part 2" }
 
         // Simulate re-splitting in the editor: add a new marker inside the second track.
         writeMarkers([500, 750])
-        let reloaded = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let reloaded = makeSession()
 
         XCTAssertEqual(reloaded.tracks.count, 3)
         XCTAssertEqual(reloaded.tracks[0].title, "Side A, Part 1", "unchanged range 0..<500 should keep its title")
@@ -78,7 +80,7 @@ final class MetadataSessionTests: XCTestCase {
 
     func testApplyAlbumInfoToAllTracksClearsOverrides() {
         writeMarkers([500])
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         session.updateTrack(session.tracks[0].id) { $0.artist = "Guest Artist"; $0.year = "1999"; $0.genre = "Jazz" }
 
         session.applyAlbumInfoToAllTracks()
@@ -91,7 +93,7 @@ final class MetadataSessionTests: XCTestCase {
     }
 
     func testResolvedFilenameUsesAlbumAndTrackMetadata() {
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         session.albumMetadata.albumArtist = "The Beatles"
         session.updateTrack(session.tracks[0].id) { $0.title = "Come Together" }
 
@@ -99,7 +101,7 @@ final class MetadataSessionTests: XCTestCase {
     }
 
     func testSetCoverArtWritesFileAndPersistsAcrossSessionInstances() throws {
-        let session = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let session = makeSession()
         let imageData = Data([0xFF, 0xD8, 0xFF]) // not a real JPEG, just distinguishable bytes
         session.setCoverArt(data: imageData, fileExtension: "jpg")
 
@@ -107,8 +109,30 @@ final class MetadataSessionTests: XCTestCase {
         XCTAssertNil(session.errorMessage)
         let writtenData = try Data(contentsOf: session.coverArtURL!)
         XCTAssertEqual(writtenData, imageData)
+        XCTAssertEqual(document.project.albumMetadata.coverArtRelativePath, "artwork.jpg")
 
-        let reloaded = MetadataSession(recordingURL: recordingURL, totalSampleCount: 1000)
+        let reloaded = makeSession()
         XCTAssertEqual(reloaded.coverArtURL?.lastPathComponent, session.coverArtURL?.lastPathComponent)
+    }
+
+    /// A multi-side project's tracks are a single flat array keyed by `sideID` — editing this
+    /// side must never touch another side's tracks.
+    func testTracksFromOtherSidesAreUnaffected() {
+        let otherSide = RecordingSide(
+            label: "Side B",
+            masterFileRelativePath: "side-b.flac",
+            peakCacheRelativePath: "side-b.peaks",
+            durationSamples: 500,
+            createdAt: Date(timeIntervalSince1970: 0)
+        )
+        document.project.sides.append(otherSide)
+        document.project.tracks = [Track(sideID: otherSide.id, startSample: 0, endSample: 500, title: "Other Side Track", trackNumber: 1)]
+
+        writeMarkers([500])
+        let session = makeSession()
+        session.updateTrack(session.tracks[0].id) { $0.title = "This Side Track" }
+
+        XCTAssertTrue(document.project.tracks.contains { $0.title == "Other Side Track" })
+        XCTAssertTrue(document.project.tracks.contains { $0.title == "This Side Track" })
     }
 }

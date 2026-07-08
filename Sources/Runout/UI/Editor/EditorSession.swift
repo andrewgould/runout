@@ -3,10 +3,11 @@ import Foundation
 
 /// Coordinates marker editing and playback behind Screen 2 (docs/UI_SPEC.md).
 ///
-/// Persistence note: markers are saved to a `<recording>.markers.json` sidecar file next to the
-/// recording. This is a temporary bridge — M7 replaces it with the real `.runout` project
-/// package (docs/DATA_MODEL.md) — but it's enough to satisfy "markers persist across an app
-/// relaunch" (this milestone's acceptance criterion) without waiting on that later milestone.
+/// Markers are the real, persisted `RecordingSide.markers` inside `document.project` — the
+/// `<recording>.markers.json` sidecar used as a temporary bridge in M4 is gone now that the
+/// project manifest is a real document. `markers` here is a working copy kept in sync by
+/// `saveMarkers()` writing straight through to `document.project` on every mutation, so
+/// SwiftUI's document-change tracking (and therefore autosave) picks it up immediately.
 @MainActor
 final class EditorSession: ObservableObject {
     @Published private(set) var markers: [Marker] = []
@@ -16,7 +17,9 @@ final class EditorSession: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published var selectedMarkerID: UUID?
 
-    let recordingURL: URL
+    private let document: RunoutDocument
+    private let sideID: UUID
+    let recordingFileURL: URL
     let sampleRate: Double
     let totalSampleCount: Int64
 
@@ -24,15 +27,17 @@ final class EditorSession: ObservableObject {
     private var player: AVAudioPlayer?
     private var playheadTimer: Timer?
 
-    init(recordingURL: URL, sampleRate: Double, totalSampleCount: Int64) {
-        self.recordingURL = recordingURL
+    init(document: RunoutDocument, sideID: UUID, recordingFileURL: URL, sampleRate: Double, totalSampleCount: Int64) {
+        self.document = document
+        self.sideID = sideID
+        self.recordingFileURL = recordingFileURL
         self.sampleRate = sampleRate
         self.totalSampleCount = totalSampleCount
         // Group explicitly per user action (see each public editing method) instead of relying
         // on the default event-loop-based grouping, which would silently merge unrelated edits
         // into one undo step if they happen to land in the same run loop turn.
         undoManager.groupsByEvent = false
-        markers = MarkerSidecarStore.load(forRecordingAt: recordingURL)
+        markers = document.project.sides.first(where: { $0.id == sideID })?.markers ?? []
         preparePlayer()
     }
 
@@ -48,7 +53,8 @@ final class EditorSession: ObservableObject {
     // MARK: - Persistence
 
     private func saveMarkers() {
-        MarkerSidecarStore.save(markers, forRecordingAt: recordingURL)
+        guard let index = document.project.sides.firstIndex(where: { $0.id == sideID }) else { return }
+        document.project.sides[index].markers = markers
     }
 
     // MARK: - Marker editing
@@ -95,7 +101,7 @@ final class EditorSession: ObservableObject {
     private func snappedSample(_ sample: Int64) -> Int64 {
         let clamped = max(0, min(totalSampleCount, sample))
         guard snapToZeroCrossing else { return clamped }
-        return MarkerSnapping.nearestZeroCrossing(toSample: clamped, fileURL: recordingURL) ?? clamped
+        return MarkerSnapping.nearestZeroCrossing(toSample: clamped, fileURL: recordingFileURL) ?? clamped
     }
 
     private func performAdd(_ marker: Marker, registerUndo: Bool) {
@@ -135,7 +141,7 @@ final class EditorSession: ObservableObject {
 
     private func preparePlayer() {
         do {
-            let player = try AVAudioPlayer(contentsOf: recordingURL)
+            let player = try AVAudioPlayer(contentsOf: recordingFileURL)
             player.prepareToPlay()
             self.player = player
         } catch {

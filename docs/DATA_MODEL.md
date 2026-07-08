@@ -73,6 +73,7 @@ struct RecordingSide: Codable, Identifiable {
     var peakCacheRelativePath: String    // e.g. "side-a.peaks", relative to the project package root
     var durationSamples: Int64
     var createdAt: Date
+    var markers: [Marker]          // split points within this side, sorted by sampleOffset (added M7)
 }
 ```
 

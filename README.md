@@ -31,7 +31,7 @@ See [`docs/FEATURES.md`](docs/FEATURES.md) for the full feature spec, including 
 
 ## Status
 
-M0 (project scaffolding) is done: the app builds and runs a placeholder window on both macOS and iPadOS, with CI green. Everything else — recording, waveform editing, tagging, export — is still ahead; see [`docs/ROADMAP.md`](docs/ROADMAP.md) for the milestone-by-milestone plan and acceptance criteria.
+M0-M7 are done: record → view the waveform → split into tracks → tag → export to lossless FLAC, all backed by a real `.runout` document (open/save/iCloud Drive sync via SwiftUI's `DocumentGroup`, no more ad-hoc sidecar files). Every milestone has been verified against real audio hardware, not just synthetic test data. Remaining stretch goals (silence-based auto-split, MusicBrainz lookup, declick/decrackle, release polish) are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Documentation
 
