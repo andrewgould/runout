@@ -1,20 +1,47 @@
 import SwiftUI
 
-/// Read-only waveform display with zoom/scroll — see docs/UI_SPEC.md (Screen 2) and
-/// docs/ROADMAP.md M3. Marker editing (M4) is not part of this view yet.
+/// Waveform display with zoom/scroll, marker placement/editing, and a playhead — see
+/// docs/UI_SPEC.md (Screen 2) and docs/ROADMAP.md M3/M4.
 ///
 /// Zoom is discrete, stepping directly through the peak cache's cached mip levels (rather than
 /// a continuous slider) — simple, robust, and each step is exactly a resolution the cache
 /// already has on hand, so no interpolation or edge-case math is needed.
 struct WaveformView: View {
     let peakCache: PeakCache
+    let totalSampleCount: Int64
+    let markers: [Marker]
+    let selectedMarkerID: UUID?
+    let playheadSample: Int64?
+
+    var onSeek: (Int64) -> Void = { _ in }
+    var onSelectMarker: (UUID?) -> Void = { _ in }
+    var onMoveMarker: (UUID, Int64) -> Void = { _, _ in }
 
     @State private var levelIndex: Int
 
-    init(peakCache: PeakCache) {
+    init(
+        peakCache: PeakCache,
+        totalSampleCount: Int64,
+        markers: [Marker] = [],
+        selectedMarkerID: UUID? = nil,
+        playheadSample: Int64? = nil,
+        onSeek: @escaping (Int64) -> Void = { _ in },
+        onSelectMarker: @escaping (UUID?) -> Void = { _ in },
+        onMoveMarker: @escaping (UUID, Int64) -> Void = { _, _ in }
+    ) {
         self.peakCache = peakCache
+        self.totalSampleCount = totalSampleCount
+        self.markers = markers
+        self.selectedMarkerID = selectedMarkerID
+        self.playheadSample = playheadSample
+        self.onSeek = onSeek
+        self.onSelectMarker = onSelectMarker
+        self.onMoveMarker = onMoveMarker
         _levelIndex = State(initialValue: peakCache.levels.isEmpty ? 0 : peakCache.levels.count / 2)
     }
+
+    private static let pointsPerBucket: CGFloat = 3
+    private static let canvasHeight: CGFloat = 200
 
     private var currentLevel: [PeakBucket] {
         guard peakCache.levels.indices.contains(levelIndex) else { return [] }
@@ -25,18 +52,40 @@ struct WaveformView: View {
         peakCache.samplesPerBucketAtFinestLevel << levelIndex
     }
 
-    private static let pointsPerBucket: CGFloat = 3
-
     private var totalWidth: CGFloat {
         CGFloat(currentLevel.count) * Self.pointsPerBucket
+    }
+
+    private func x(forSample sample: Int64) -> CGFloat {
+        CGFloat(Double(sample) / Double(bucketSize)) * Self.pointsPerBucket
+    }
+
+    private func sample(forX x: CGFloat) -> Int64 {
+        let raw = Double(x / Self.pointsPerBucket) * Double(bucketSize)
+        return max(0, min(totalSampleCount, Int64(raw)))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             zoomControl
             ScrollView(.horizontal) {
-                waveformCanvas
-                    .frame(width: max(totalWidth, 1), height: 200)
+                ZStack(alignment: .topLeading) {
+                    waveformCanvas
+                    if let playheadSample {
+                        playheadLine(atSample: playheadSample)
+                    }
+                    ForEach(markers) { marker in
+                        markerHandle(for: marker)
+                    }
+                }
+                .frame(width: max(totalWidth, 1), height: Self.canvasHeight)
+                .contentShape(Rectangle())
+                .gesture(
+                    SpatialTapGesture().onEnded { value in
+                        onSelectMarker(nil)
+                        onSeek(sample(forX: value.location.x))
+                    }
+                )
             }
         }
     }
@@ -83,6 +132,65 @@ struct WaveformView: View {
             context.stroke(path, with: .color(.orange), lineWidth: Self.pointsPerBucket)
         }
     }
+
+    private func playheadLine(atSample sample: Int64) -> some View {
+        Rectangle()
+            .fill(Color.white)
+            .frame(width: 1.5, height: Self.canvasHeight)
+            .offset(x: x(forSample: sample))
+            .allowsHitTesting(false)
+    }
+
+    private func markerHandle(for marker: Marker) -> some View {
+        MarkerHandleView(
+            isSelected: marker.id == selectedMarkerID,
+            height: Self.canvasHeight,
+            xPosition: x(forSample: marker.sampleOffset),
+            onSelect: { onSelectMarker(marker.id) },
+            onDragEnded: { deltaX in
+                let newX = x(forSample: marker.sampleOffset) + deltaX
+                onMoveMarker(marker.id, sample(forX: newX))
+            }
+        )
+    }
+}
+
+/// A vertical marker line with a draggable flag handle at the top. Drag position is tracked
+/// locally and only committed (via `onDragEnded`) on release, so a drag-in-progress doesn't spam
+/// the undo stack with a move per frame.
+private struct MarkerHandleView: View {
+    let isSelected: Bool
+    let height: CGFloat
+    let xPosition: CGFloat
+    let onSelect: () -> Void
+    let onDragEnded: (CGFloat) -> Void
+
+    @State private var dragTranslation: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Rectangle()
+                .fill(isSelected ? Color.white : Color.orange)
+                .frame(width: 2, height: height)
+            Image(systemName: "flag.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(isSelected ? Color.white : Color.orange)
+                .padding(6)
+                .contentShape(Rectangle())
+        }
+        .offset(x: xPosition + dragTranslation - 1)
+        .onTapGesture { onSelect() }
+        .gesture(
+            DragGesture(minimumDistance: 3)
+                .onChanged { value in
+                    dragTranslation = value.translation.width
+                }
+                .onEnded { value in
+                    onDragEnded(value.translation.width)
+                    dragTranslation = 0
+                }
+        )
+    }
 }
 
 #Preview {
@@ -92,7 +200,14 @@ struct WaveformView: View {
             return PeakBucket(min: -abs(v), max: abs(v))
         }
     ]
-    return WaveformView(peakCache: PeakCache(samplesPerBucketAtFinestLevel: 256, levels: levels))
-        .padding()
-        .background(Color.black)
+    let cache = PeakCache(samplesPerBucketAtFinestLevel: 256, levels: levels)
+    return WaveformView(
+        peakCache: cache,
+        totalSampleCount: cache.totalSampleCountEstimate,
+        markers: [Marker(sampleOffset: 20_000)],
+        selectedMarkerID: nil,
+        playheadSample: 10_000
+    )
+    .padding()
+    .background(Color.black)
 }
