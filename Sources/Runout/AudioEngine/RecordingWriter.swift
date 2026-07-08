@@ -8,13 +8,28 @@ import Foundation
 /// the tap thread's only job is a fast memcpy, never a blocking disk write. See
 /// docs/ARCHITECTURE.md (Concurrency model) for why this matters.
 ///
-/// M1 writes plain PCM (CAF container); native FLAC output lands in M2.
+/// Writes native FLAC (`kAudioFormatFLAC`, supported by Core Audio since macOS 11 / iOS 14 — no
+/// vendored libFLAC, see docs/ARCHITECTURE.md). Tap buffers arrive as float32 PCM; the encoder
+/// quantizes to `bitDepth`-bit integer samples as it writes, so `bitDepth` must be 16 or 24.
 actor RecordingWriter {
     private var audioFile: AVAudioFile?
     private(set) var framesWritten: AVAudioFramePosition = 0
 
-    func start(url: URL, format: AVAudioFormat) throws {
-        audioFile = try AVAudioFile(forWriting: url, settings: format.settings)
+    func start(url: URL, sourceFormat: AVAudioFormat, bitDepth: Int) throws {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatFLAC,
+            AVSampleRateKey: sourceFormat.sampleRate,
+            AVNumberOfChannelsKey: sourceFormat.channelCount,
+            AVLinearPCMBitDepthKey: bitDepth,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false,
+        ]
+        audioFile = try AVAudioFile(
+            forWriting: url,
+            settings: settings,
+            commonFormat: .pcmFormatFloat32,
+            interleaved: sourceFormat.isInterleaved
+        )
         framesWritten = 0
     }
 

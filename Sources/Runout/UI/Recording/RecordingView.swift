@@ -126,7 +126,7 @@ struct RecordingView: View {
     private func recordingFileName() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        return "Recording \(formatter.string(from: Date())).caf"
+        return "Recording \(formatter.string(from: Date())).flac"
     }
 }
 

@@ -7,7 +7,9 @@ final class IOSAudioInputManager: AudioInputManager {
     func availableDevices() throws -> [AudioInputDevice] {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothHFP])
+            // Not .allowBluetoothHFP: that option requires a newer iOS SDK than some toolchains
+            // (including CI's) currently ship, and .allowBluetooth still works everywhere.
+            try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth])
             try session.setActive(true)
         } catch {
             throw AudioInputManagerError.sessionConfigurationFailed(error)

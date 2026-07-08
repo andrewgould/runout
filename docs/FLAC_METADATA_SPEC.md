@@ -86,10 +86,12 @@ bytes      — the raw image file bytes themselves (the whole JPEG/PNG file, as-
 
 ## Write algorithm
 
-Given a FLAC file already written by `AVAudioFile` (containing `"fLaC"` + `STREAMINFO` block with its last-block flag currently set to 1, + audio frames):
+**Correction from real-world testing (M2):** a FLAC file written by `AVAudioFile` is *not* just `STREAMINFO` + audio frames as originally assumed below — Apple's encoder already appends its own minimal `VORBIS_COMMENT` block (observed content: a single `WAVEFORMATEXTENSIBLE_CHANNEL_MASK=0x...` comment, `is last: true`). Verified with `metaflac --list` against a real recorded file. This means step 2 below must walk **all** existing metadata blocks (not assume `STREAMINFO` is immediately followed by audio frames), and step 5 must *replace* that existing `VORBIS_COMMENT` block with ours (merging in Apple's channel-mask comment if you want to preserve it, or simply dropping it — it's not something Runout's UI ever needs to read back) rather than assume no comment block exists yet.
+
+Given a FLAC file already written by `AVAudioFile` (containing `"fLaC"` + `STREAMINFO` + an existing minimal `VORBIS_COMMENT` block + audio frames):
 
 1. Read the file's first 4 bytes, confirm `"fLaC"`.
-2. Read the `STREAMINFO` block header (4 bytes) immediately after. Confirm block type is 0. Read its declared length, and note the byte offset where its data ends — this is where the audio frames currently begin.
+2. Walk metadata blocks one at a time from there (each has the 4-byte header described above): for each, note its type and length, and stop as soon as you pass a block whose last-block flag is set — that marks the end of the metadata blocks and the start of audio frames. Record the byte offset where audio frames begin, and keep the `STREAMINFO` block's bytes unchanged; discard/ignore any existing `VORBIS_COMMENT` block you encounter (Runout will write its own).
 3. Build the new `VORBIS_COMMENT` block bytes (header + data, as specified above).
 4. Build the new `PICTURE` block bytes (header + data), only if cover art is present for this export.
 5. Assemble the output file as:

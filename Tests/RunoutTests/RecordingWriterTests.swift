@@ -3,18 +3,18 @@ import XCTest
 @testable import Runout
 
 final class RecordingWriterTests: XCTestCase {
-    func testWrittenFileRoundTripsSampleCountAndAudio() async throws {
+    func testWrittenFileIsFLACAndRoundTripsSampleCountAndAudio() async throws {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) else {
             return XCTFail("Could not construct format")
         }
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("caf")
+            .appendingPathExtension("flac")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let writer = RecordingWriter()
-        try await writer.start(url: url, format: format)
+        try await writer.start(url: url, sourceFormat: format, bitDepth: 24)
 
         let frameCount: AVAudioFrameCount = 4800
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
@@ -39,6 +39,12 @@ final class RecordingWriterTests: XCTestCase {
 
         await writer.stop()
 
+        // Confirm this is really a FLAC file on disk, not just something AVAudioFile happens to read back.
+        let fileHandle = try FileHandle(forReadingFrom: url)
+        let magic = fileHandle.readData(ofLength: 4)
+        try fileHandle.close()
+        XCTAssertEqual(magic, Data("fLaC".utf8))
+
         let readBackFile = try AVAudioFile(forReading: url)
         XCTAssertEqual(readBackFile.length, AVAudioFramePosition(frameCount * 2))
 
@@ -48,7 +54,9 @@ final class RecordingWriterTests: XCTestCase {
         try readBackFile.read(into: readBackBuffer)
         XCTAssertEqual(readBackBuffer.frameLength, AVAudioFrameCount(frameCount * 2))
 
-        // Spot-check a sample matches what was written (within float round-trip tolerance).
+        // FLAC quantizes our float32 source to 24-bit integer samples, so this is lossy relative
+        // to the original float32 value (though lossless from that quantization point onward) —
+        // tolerance is generous relative to a 24-bit step (~1.2e-7) to allow for that.
         let readSample = readBackBuffer.floatChannelData![0][10]
         let expectedSample = channelData[0][10]
         XCTAssertEqual(readSample, expectedSample, accuracy: 0.001)
