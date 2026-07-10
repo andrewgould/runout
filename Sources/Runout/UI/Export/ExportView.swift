@@ -95,6 +95,7 @@ private struct ExportWorkspaceView: View {
             destinationRow
             templateRow
             formatSummary
+            audioPolishRow
 
             trackTable
 
@@ -149,6 +150,23 @@ private struct ExportWorkspaceView: View {
         Text("FLAC · lossless · \(bitDepth)-bit — passthrough, no re-encode")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    private var audioPolishRow: some View {
+        HStack(spacing: 16) {
+            HStack {
+                Text("Fade at boundaries:")
+                    .foregroundStyle(.secondary)
+                Slider(value: $session.fadeDurationMilliseconds, in: 0...100, step: 1)
+                    .frame(width: 140)
+                Text("\(Int(session.fadeDurationMilliseconds)) ms")
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 50, alignment: .leading)
+            }
+
+            Toggle("Reduce clicks/pops", isOn: $session.declickEnabled)
+        }
+        .font(.callout)
     }
 
     private var trackTable: some View {
