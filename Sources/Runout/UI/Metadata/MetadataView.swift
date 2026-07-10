@@ -55,6 +55,8 @@ private struct MetadataWorkspaceView: View {
     @StateObject private var session: MetadataSession
     @State private var selectedTrackID: UUID?
     @State private var isImportingCoverArt = false
+    @State private var isShowingMusicBrainzLookup = false
+    @State private var musicBrainzCoverArtError: String?
 
     init(document: RunoutDocument, sideID: UUID, totalSampleCount: Int64) {
         self.document = document
@@ -87,6 +89,32 @@ private struct MetadataWorkspaceView: View {
         .fileImporter(isPresented: $isImportingCoverArt, allowedContentTypes: [.image]) { result in
             if case .success(let url) = result {
                 session.setCoverArt(fromFileAt: url)
+            }
+        }
+        .sheet(isPresented: $isShowingMusicBrainzLookup) {
+            MusicBrainzLookupView(
+                initialArtist: session.albumMetadata.albumArtist,
+                initialAlbum: session.albumMetadata.albumTitle,
+                onApply: { detail, fetchCoverArt in
+                    session.applyMusicBrainzRelease(detail)
+                    if fetchCoverArt {
+                        fetchAndApplyCoverArt(releaseID: detail.id)
+                    }
+                }
+            )
+        }
+    }
+
+    /// Fire-and-forget from the sheet's callback (which isn't itself async) — errors surface via
+    /// `musicBrainzCoverArtError` rather than blocking "Use This Release" on the download.
+    private func fetchAndApplyCoverArt(releaseID: String) {
+        Task {
+            do {
+                let client = CoverArtArchiveClient()
+                let (data, fileExtension) = try await client.fetchFrontCoverImageData(releaseID: releaseID)
+                session.setCoverArt(data: data, fileExtension: fileExtension)
+            } catch {
+                musicBrainzCoverArtError = "Couldn't fetch cover art from MusicBrainz: \(error.localizedDescription)"
             }
         }
     }
@@ -160,12 +188,16 @@ private struct MetadataWorkspaceView: View {
                     session.applyAlbumInfoToAllTracks()
                 }
                 Button {
-                    // Phase 2 / stretch — see docs/ROADMAP.md M9.
+                    isShowingMusicBrainzLookup = true
                 } label: {
                     Label("Look Up on MusicBrainz", systemImage: "magnifyingglass")
                 }
-                .disabled(true)
-                .help("Coming in a future update (docs/ROADMAP.md M9)")
+            }
+
+            if let musicBrainzCoverArtError {
+                Label(musicBrainzCoverArtError, systemImage: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+                    .font(.footnote)
             }
         }
     }

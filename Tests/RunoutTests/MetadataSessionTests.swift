@@ -135,4 +135,69 @@ final class MetadataSessionTests: XCTestCase {
         XCTAssertTrue(document.project.tracks.contains { $0.title == "Other Side Track" })
         XCTAssertTrue(document.project.tracks.contains { $0.title == "This Side Track" })
     }
+
+    // MARK: - MusicBrainz lookup application (M9)
+
+    private func makeMusicBrainzDetail(tracks: [MusicBrainzTrack], date: String? = "1969-09-26") -> MusicBrainzReleaseDetail {
+        MusicBrainzReleaseDetail(
+            id: "05e77dbd-1c4f-4e5e-8461-caac6e5fbae7",
+            title: "Abbey Road",
+            artist: "The Beatles",
+            date: date,
+            hasCoverArt: true,
+            tracks: tracks
+        )
+    }
+
+    func testApplyMusicBrainzReleaseSetsAlbumMetadata() {
+        let session = makeSession()
+        session.applyMusicBrainzRelease(makeMusicBrainzDetail(tracks: []))
+
+        XCTAssertEqual(session.albumMetadata.albumTitle, "Abbey Road")
+        XCTAssertEqual(session.albumMetadata.albumArtist, "The Beatles")
+        XCTAssertEqual(session.albumMetadata.year, "1969")
+    }
+
+    func testApplyMusicBrainzReleaseMatchesTracksByPosition() {
+        writeMarkers([500])
+        let session = makeSession()
+        XCTAssertEqual(session.tracks.map(\.trackNumber), [1, 2])
+
+        session.applyMusicBrainzRelease(makeMusicBrainzDetail(tracks: [
+            MusicBrainzTrack(position: 1, title: "Come Together"),
+            MusicBrainzTrack(position: 2, title: "Something"),
+        ]))
+
+        XCTAssertEqual(session.tracks.first(where: { $0.trackNumber == 1 })?.title, "Come Together")
+        XCTAssertEqual(session.tracks.first(where: { $0.trackNumber == 2 })?.title, "Something")
+    }
+
+    func testApplyMusicBrainzReleaseLeavesUnmatchedTrackNumbersUntouched() {
+        writeMarkers([500])
+        let session = makeSession()
+        session.updateTrack(session.tracks[1].id) { $0.title = "Manually Typed Title" }
+
+        // Only one MusicBrainz track (position 1) — position 2 has nothing to match against.
+        session.applyMusicBrainzRelease(makeMusicBrainzDetail(tracks: [
+            MusicBrainzTrack(position: 1, title: "Come Together"),
+        ]))
+
+        XCTAssertEqual(session.tracks.first(where: { $0.trackNumber == 1 })?.title, "Come Together")
+        XCTAssertEqual(session.tracks.first(where: { $0.trackNumber == 2 })?.title, "Manually Typed Title")
+    }
+
+    func testApplyMusicBrainzReleaseWithoutDateLeavesYearUnchanged() {
+        let session = makeSession()
+        session.albumMetadata.year = "2020"
+        session.applyMusicBrainzRelease(makeMusicBrainzDetail(tracks: [], date: nil))
+        XCTAssertEqual(session.albumMetadata.year, "2020")
+    }
+
+    func testApplyMusicBrainzReleasePersistsAcrossSessionInstances() {
+        let session = makeSession()
+        session.applyMusicBrainzRelease(makeMusicBrainzDetail(tracks: []))
+
+        let reloaded = makeSession()
+        XCTAssertEqual(reloaded.albumMetadata.albumTitle, "Abbey Road")
+    }
 }
