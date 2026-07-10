@@ -162,4 +162,104 @@ final class EditorSessionTests: XCTestCase {
         }
         XCTAssertLessThanOrEqual(abs(snapped - 20000), Int64(MarkerSnapping.defaultSearchWindowInSamples))
     }
+
+    // MARK: - Silence-detected proposals (M8)
+    //
+    // SilenceDetectorTests already covers the detection algorithm itself; these just verify
+    // EditorSession's review plumbing (never auto-committing, accept/reject, de-duplication
+    // against existing markers) using small synthetic peak caches sized to fit the 1-second
+    // fixture from setUp() — with an explicitly short minimumGapDuration to match.
+
+    private static let testBucketSize = 256
+    private static let testMinimumGapDuration = 0.2
+
+    private func makeSilentGapPeakCache() -> PeakCache {
+        let loud = PeakBucket(min: -20000, max: 20000)
+        let silent = PeakBucket(min: -10, max: 10)
+        let buckets = Array(repeating: loud, count: 30) + Array(repeating: silent, count: 60) + Array(repeating: loud, count: 30)
+        return PeakCache(samplesPerBucketAtFinestLevel: Self.testBucketSize, levels: [buckets])
+    }
+
+    private func makeTwoGapPeakCache() -> PeakCache {
+        let loud = PeakBucket(min: -20000, max: 20000)
+        let silent = PeakBucket(min: -10, max: 10)
+        let buckets = Array(repeating: loud, count: 20)
+            + Array(repeating: silent, count: 50)
+            + Array(repeating: loud, count: 20)
+            + Array(repeating: silent, count: 50)
+            + Array(repeating: loud, count: 20)
+        return PeakCache(samplesPerBucketAtFinestLevel: Self.testBucketSize, levels: [buckets])
+    }
+
+    func testDetectSilenceBreaksPopulatesProposedMarkersWithoutCommitting() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        session.detectSilenceBreaks(peakCache: makeSilentGapPeakCache(), minimumGapDuration: Self.testMinimumGapDuration)
+
+        XCTAssertEqual(session.proposedMarkers.count, 1)
+        XCTAssertTrue(session.markers.isEmpty, "detecting must never auto-commit")
+    }
+
+    func testAcceptProposedMarkerCommitsItAsARealMarker() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        session.detectSilenceBreaks(peakCache: makeSilentGapPeakCache(), minimumGapDuration: Self.testMinimumGapDuration)
+        guard let proposed = session.proposedMarkers.first else { return XCTFail("Expected a proposal") }
+
+        session.acceptProposedMarker(proposed.id)
+
+        XCTAssertTrue(session.proposedMarkers.isEmpty)
+        XCTAssertEqual(session.markers.map(\.sampleOffset), [proposed.sampleOffset])
+    }
+
+    func testRejectProposedMarkerDiscardsItWithoutCommitting() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        session.detectSilenceBreaks(peakCache: makeSilentGapPeakCache(), minimumGapDuration: Self.testMinimumGapDuration)
+        guard let proposed = session.proposedMarkers.first else { return XCTFail("Expected a proposal") }
+
+        session.rejectProposedMarker(proposed.id)
+
+        XCTAssertTrue(session.proposedMarkers.isEmpty)
+        XCTAssertTrue(session.markers.isEmpty)
+    }
+
+    func testAcceptAllProposedMarkersCommitsEveryOne() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        session.detectSilenceBreaks(peakCache: makeTwoGapPeakCache(), minimumGapDuration: Self.testMinimumGapDuration)
+        XCTAssertEqual(session.proposedMarkers.count, 2)
+
+        session.acceptAllProposedMarkers()
+
+        XCTAssertTrue(session.proposedMarkers.isEmpty)
+        XCTAssertEqual(session.markers.count, 2)
+    }
+
+    func testRejectAllProposedMarkersDiscardsAllWithoutCommitting() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        session.detectSilenceBreaks(peakCache: makeTwoGapPeakCache(), minimumGapDuration: Self.testMinimumGapDuration)
+        XCTAssertEqual(session.proposedMarkers.count, 2)
+
+        session.rejectAllProposedMarkers()
+
+        XCTAssertTrue(session.proposedMarkers.isEmpty)
+        XCTAssertTrue(session.markers.isEmpty)
+    }
+
+    func testDetectSilenceBreaksSkipsProposalsNearExistingMarkers() {
+        let session = makeSession()
+        session.snapToZeroCrossing = false
+        let cache = makeSilentGapPeakCache()
+
+        // The gap in makeSilentGapPeakCache runs from bucket 30 to bucket 90 (60 silent
+        // buckets), so its midpoint is bucket 60 — place a marker essentially right there.
+        let midpointSample = Int64(60 * Self.testBucketSize)
+        session.addMarker(atSample: midpointSample)
+
+        session.detectSilenceBreaks(peakCache: cache, minimumGapDuration: Self.testMinimumGapDuration)
+
+        XCTAssertTrue(session.proposedMarkers.isEmpty, "shouldn't propose a marker essentially on top of an existing one")
+    }
 }

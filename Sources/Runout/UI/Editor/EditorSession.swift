@@ -11,6 +11,10 @@ import Foundation
 @MainActor
 final class EditorSession: ObservableObject {
     @Published private(set) var markers: [Marker] = []
+    /// Silence-detected candidate markers awaiting review — see docs/FEATURES.md §2. Never
+    /// written to `document.project`; only `acceptProposedMarker`/`acceptAllProposedMarkers`
+    /// (which route through the normal `addMarker` path) actually commit anything.
+    @Published private(set) var proposedMarkers: [Marker] = []
     @Published var snapToZeroCrossing = true
     @Published private(set) var isPlaying = false
     @Published private(set) var playheadSample: Int64 = 0
@@ -96,6 +100,52 @@ final class EditorSession: ObservableObject {
         defer { undoManager.endUndoGrouping() }
         performDelete(id, registerUndo: true, restoring: marker)
         if selectedMarkerID == id { selectedMarkerID = nil }
+    }
+
+    // MARK: - Silence-detected proposals (docs/FEATURES.md §2, docs/ROADMAP.md M8)
+    //
+    // Proposals never touch `document.project` directly — only accepting one (individually or
+    // via "accept all") routes it through `addMarker`, so it gets exactly the same zero-crossing
+    // snapping and undo registration as a manually-placed marker.
+
+    func detectSilenceBreaks(
+        peakCache: PeakCache,
+        thresholdDecibels: Float = SilenceDetector.defaultThresholdDecibels,
+        minimumGapDuration: Double = SilenceDetector.defaultMinimumGapDuration
+    ) {
+        let candidates = SilenceDetector.detectTrackBreaks(
+            in: peakCache,
+            sampleRate: sampleRate,
+            thresholdDecibels: thresholdDecibels,
+            minimumGapDuration: minimumGapDuration
+        )
+        // Skip proposals that land right on top of a marker that already exists.
+        let tolerance = Int64(MarkerSnapping.defaultSearchWindowInSamples)
+        proposedMarkers = candidates.filter { candidate in
+            !markers.contains { abs($0.sampleOffset - candidate.sampleOffset) < tolerance }
+        }
+    }
+
+    func acceptProposedMarker(_ id: UUID) {
+        guard let marker = proposedMarkers.first(where: { $0.id == id }) else { return }
+        proposedMarkers.removeAll { $0.id == id }
+        addMarker(atSample: marker.sampleOffset)
+    }
+
+    func rejectProposedMarker(_ id: UUID) {
+        proposedMarkers.removeAll { $0.id == id }
+    }
+
+    func acceptAllProposedMarkers() {
+        let toAccept = proposedMarkers
+        proposedMarkers = []
+        for marker in toAccept {
+            addMarker(atSample: marker.sampleOffset)
+        }
+    }
+
+    func rejectAllProposedMarkers() {
+        proposedMarkers = []
     }
 
     private func snappedSample(_ sample: Int64) -> Int64 {

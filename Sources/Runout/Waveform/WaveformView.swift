@@ -10,6 +10,10 @@ struct WaveformView: View {
     let peakCache: PeakCache
     let totalSampleCount: Int64
     let markers: [Marker]
+    /// Silence-detected candidates awaiting review (docs/ROADMAP.md M8) — rendered distinctly
+    /// (dashed, non-interactive) so they're visibly different from committed markers until
+    /// accepted via the editor's Accept All/Reject All controls.
+    let proposedMarkers: [Marker]
     let selectedMarkerID: UUID?
     let playheadSample: Int64?
 
@@ -23,6 +27,7 @@ struct WaveformView: View {
         peakCache: PeakCache,
         totalSampleCount: Int64,
         markers: [Marker] = [],
+        proposedMarkers: [Marker] = [],
         selectedMarkerID: UUID? = nil,
         playheadSample: Int64? = nil,
         onSeek: @escaping (Int64) -> Void = { _ in },
@@ -32,6 +37,7 @@ struct WaveformView: View {
         self.peakCache = peakCache
         self.totalSampleCount = totalSampleCount
         self.markers = markers
+        self.proposedMarkers = proposedMarkers
         self.selectedMarkerID = selectedMarkerID
         self.playheadSample = playheadSample
         self.onSeek = onSeek
@@ -73,6 +79,9 @@ struct WaveformView: View {
                     waveformCanvas
                     if let playheadSample {
                         playheadLine(atSample: playheadSample)
+                    }
+                    ForEach(proposedMarkers) { marker in
+                        proposedMarkerLine(atSample: marker.sampleOffset)
                     }
                     ForEach(markers) { marker in
                         markerHandle(for: marker)
@@ -138,6 +147,15 @@ struct WaveformView: View {
             .fill(Color.white)
             .frame(width: 1.5, height: Self.canvasHeight)
             .offset(x: x(forSample: sample))
+            .allowsHitTesting(false)
+    }
+
+    /// Dashed rather than solid so a proposal reads as "not yet committed" at a glance.
+    private func proposedMarkerLine(atSample sample: Int64) -> some View {
+        Rectangle()
+            .stroke(Color.yellow, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+            .frame(width: 2, height: Self.canvasHeight)
+            .offset(x: x(forSample: sample) - 1)
             .allowsHitTesting(false)
     }
 
