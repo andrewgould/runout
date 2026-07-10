@@ -84,6 +84,26 @@ final class MetadataSession: ObservableObject {
         FileNameTemplate.resolve(template, track: track, album: albumMetadata) + ".flac"
     }
 
+    /// Applies a MusicBrainz lookup result (docs/ROADMAP.md M9): album title/artist/year, and
+    /// per-track titles matched by track number against MusicBrainz's track position. Never
+    /// adds or removes tracks — this app's tracks come from actual marker positions in the
+    /// recording, not from an external listing, so a release with a different track count just
+    /// leaves any unmatched tracks' titles untouched.
+    func applyMusicBrainzRelease(_ detail: MusicBrainzReleaseDetail) {
+        albumMetadata.albumTitle = detail.title
+        albumMetadata.albumArtist = detail.artist
+        if let date = detail.date {
+            let year = String(date.prefix(4))
+            if year.count == 4 { albumMetadata.year = year }
+        }
+        for index in tracks.indices {
+            if let match = detail.tracks.first(where: { $0.position == tracks[index].trackNumber }) {
+                tracks[index].title = match.title
+            }
+        }
+        pushTracksToDocument()
+    }
+
     // MARK: - Cover art
 
     func setCoverArt(fromFileAt sourceURL: URL) {
