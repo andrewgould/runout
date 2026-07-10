@@ -20,6 +20,9 @@ struct WaveformView: View {
     var onSeek: (Int64) -> Void = { _ in }
     var onSelectMarker: (UUID?) -> Void = { _ in }
     var onMoveMarker: (UUID, Int64) -> Void = { _, _ in }
+    /// Cmd+click on the waveform (docs/FEATURES.md §5's macOS keyboard shortcuts) — adds a
+    /// marker at the click point without disturbing the current selection/seek position.
+    var onAddMarker: (Int64) -> Void = { _ in }
 
     @State private var levelIndex: Int
 
@@ -32,7 +35,8 @@ struct WaveformView: View {
         playheadSample: Int64? = nil,
         onSeek: @escaping (Int64) -> Void = { _ in },
         onSelectMarker: @escaping (UUID?) -> Void = { _ in },
-        onMoveMarker: @escaping (UUID, Int64) -> Void = { _, _ in }
+        onMoveMarker: @escaping (UUID, Int64) -> Void = { _, _ in },
+        onAddMarker: @escaping (Int64) -> Void = { _ in }
     ) {
         self.peakCache = peakCache
         self.totalSampleCount = totalSampleCount
@@ -43,6 +47,7 @@ struct WaveformView: View {
         self.onSeek = onSeek
         self.onSelectMarker = onSelectMarker
         self.onMoveMarker = onMoveMarker
+        self.onAddMarker = onAddMarker
         _levelIndex = State(initialValue: peakCache.levels.isEmpty ? 0 : peakCache.levels.count / 2)
     }
 
@@ -89,12 +94,28 @@ struct WaveformView: View {
                 }
                 .frame(width: max(totalWidth, 1), height: Self.canvasHeight)
                 .contentShape(Rectangle())
+                #if os(macOS)
+                .gesture(
+                    // Cmd+click adds a marker (docs/FEATURES.md §5, macOS-only — no keyboard
+                    // modifiers on a plain touch tap on iPadOS).
+                    SpatialTapGesture()
+                        .modifiers(.command)
+                        .onEnded { value in
+                            onAddMarker(sample(forX: value.location.x))
+                        }
+                        .exclusively(before: SpatialTapGesture().onEnded { value in
+                            onSelectMarker(nil)
+                            onSeek(sample(forX: value.location.x))
+                        })
+                )
+                #else
                 .gesture(
                     SpatialTapGesture().onEnded { value in
                         onSelectMarker(nil)
                         onSeek(sample(forX: value.location.x))
                     }
                 )
+                #endif
             }
         }
     }
@@ -111,6 +132,7 @@ struct WaveformView: View {
                 Image(systemName: "minus.magnifyingglass")
             }
             .disabled(levelIndex >= peakCache.levels.count - 1)
+            .accessibilityLabel("Zoom Out")
 
             Button {
                 levelIndex = max(levelIndex - 1, 0)
@@ -118,6 +140,7 @@ struct WaveformView: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .disabled(levelIndex <= 0)
+            .accessibilityLabel("Zoom In")
 
             Text("\(bucketSize) samples/point")
                 .font(.caption)
@@ -208,6 +231,10 @@ private struct MarkerHandleView: View {
                     dragTranslation = 0
                 }
         )
+        .accessibilityElement()
+        .accessibilityLabel("Marker")
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+        .accessibilityHint("Double-tap to select. Once selected, use the left and right arrow keys to move it.")
     }
 }
 

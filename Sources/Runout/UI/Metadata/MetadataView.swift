@@ -225,6 +225,10 @@ private struct MetadataWorkspaceView: View {
             .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: nil) { providers in
                 handleCoverArtDrop(providers)
             }
+            .accessibilityElement()
+            .accessibilityLabel(session.coverArtURL == nil ? "Cover art, none set" : "Cover art")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint("Opens a file picker to choose cover art. You can also drag an image file here.")
 
             Button("Paste") {
                 if let (data, ext) = PasteboardImage.read() {

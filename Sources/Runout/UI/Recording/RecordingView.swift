@@ -198,6 +198,9 @@ private struct LevelMeterBar: View {
                 .foregroundStyle(.secondary)
                 .offset(y: 20)
         }
+        .accessibilityElement()
+        .accessibilityLabel("Input level")
+        .accessibilityValue(level.isClipping ? "\(decibelLabel), clipping" : decibelLabel)
     }
 
     private var decibelLabel: String {
