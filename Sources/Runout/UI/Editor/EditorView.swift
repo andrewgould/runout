@@ -110,12 +110,17 @@ private struct EditorWorkspaceView: View {
                 peakCache: peakCache,
                 totalSampleCount: totalSampleCount,
                 markers: session.markers,
+                proposedMarkers: session.proposedMarkers,
                 selectedMarkerID: session.selectedMarkerID,
                 playheadSample: session.playheadSample,
                 onSeek: { session.seek(toSample: $0) },
                 onSelectMarker: { session.selectedMarkerID = $0 },
                 onMoveMarker: { session.moveMarker($0, toSample: $1) }
             )
+
+            if !session.proposedMarkers.isEmpty {
+                proposedMarkersBanner
+            }
 
             trackList
 
@@ -164,6 +169,14 @@ private struct EditorWorkspaceView: View {
             Divider().frame(height: 20)
 
             Button {
+                session.detectSilenceBreaks(peakCache: peakCache)
+            } label: {
+                Label("Auto-Detect Tracks", systemImage: "waveform.badge.magnifyingglass")
+            }
+
+            Divider().frame(height: 20)
+
+            Button {
                 session.undo()
             } label: {
                 Image(systemName: "arrow.uturn.backward")
@@ -176,6 +189,27 @@ private struct EditorWorkspaceView: View {
                 Image(systemName: "arrow.uturn.forward")
             }
             .disabled(!session.canRedo)
+        }
+    }
+
+    private var proposedMarkersBanner: some View {
+        HStack {
+            Label(
+                "\(session.proposedMarkers.count) proposed track break\(session.proposedMarkers.count == 1 ? "" : "s") found",
+                systemImage: "waveform.badge.magnifyingglass"
+            )
+            .foregroundStyle(.yellow)
+            .font(.footnote)
+
+            Spacer()
+
+            Button("Reject All") {
+                session.rejectAllProposedMarkers()
+            }
+            Button("Accept All") {
+                session.acceptAllProposedMarkers()
+            }
+            .buttonStyle(.borderedProminent)
         }
     }
 
