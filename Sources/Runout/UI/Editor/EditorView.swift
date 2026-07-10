@@ -78,6 +78,9 @@ private struct EditorWorkspaceView: View {
     let totalSampleCount: Int64
 
     @StateObject private var session: EditorSession
+    /// Small enough to be a precise nudge, large enough to be audible/visible — see
+    /// docs/FEATURES.md §5's "arrow keys = nudge selected marker by a small increment".
+    private var nudgeSampleCount: Int64 { max(1, Int64(sampleRate * 0.010)) }
 
     init(document: RunoutDocument, sideID: UUID, recordingFileURL: URL, peakCache: PeakCache, sampleRate: Double, totalSampleCount: Int64) {
         self.document = document
@@ -115,7 +118,8 @@ private struct EditorWorkspaceView: View {
                 playheadSample: session.playheadSample,
                 onSeek: { session.seek(toSample: $0) },
                 onSelectMarker: { session.selectedMarkerID = $0 },
-                onMoveMarker: { session.moveMarker($0, toSample: $1) }
+                onMoveMarker: { session.moveMarker($0, toSample: $1) },
+                onAddMarker: { session.addMarker(atSample: $0) }
             )
 
             if !session.proposedMarkers.isEmpty {
@@ -134,6 +138,35 @@ private struct EditorWorkspaceView: View {
         }
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.leftArrow) { nudgeSelectedMarker(by: -nudgeSampleCount) }
+        .onKeyPress(.rightArrow) { nudgeSelectedMarker(by: nudgeSampleCount) }
+        .background {
+            // Hidden buttons rather than a Commands scene, since these shortcuts are specific to
+            // this screen (docs/FEATURES.md §5), not app-wide menu commands.
+            Group {
+                Button("Play/Pause") { session.togglePlayback() }
+                    .keyboardShortcut(.space, modifiers: [])
+                Button("Undo") { session.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .disabled(!session.canUndo)
+                Button("Redo") { session.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!session.canRedo)
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func nudgeSelectedMarker(by delta: Int64) -> KeyPress.Result {
+        guard let id = session.selectedMarkerID, let marker = session.markers.first(where: { $0.id == id }) else {
+            return .ignored
+        }
+        session.moveMarker(id, toSample: marker.sampleOffset + delta)
+        return .handled
     }
 
     private var toolbar: some View {
@@ -143,6 +176,7 @@ private struct EditorWorkspaceView: View {
             } label: {
                 Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
             }
+            .accessibilityLabel(session.isPlaying ? "Pause" : "Play")
 
             Text(timeString(forSample: session.playheadSample))
                 .font(.system(.body, design: .monospaced))
@@ -182,6 +216,7 @@ private struct EditorWorkspaceView: View {
                 Image(systemName: "arrow.uturn.backward")
             }
             .disabled(!session.canUndo)
+            .accessibilityLabel("Undo")
 
             Button {
                 session.redo()
@@ -189,6 +224,7 @@ private struct EditorWorkspaceView: View {
                 Image(systemName: "arrow.uturn.forward")
             }
             .disabled(!session.canRedo)
+            .accessibilityLabel("Redo")
         }
     }
 
