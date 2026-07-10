@@ -15,6 +15,12 @@ final class ExportSession: ObservableObject {
     @Published var destinationFolder: URL
     @Published var fileNameTemplate: String = FileNameTemplate.defaultTemplate
     @Published var overwriteBehavior: OverwriteBehavior = .appendNumber
+    /// Short fade-in/out at each track's start/end (docs/FEATURES.md §2) — a second line of
+    /// defense against clicks at cut points, independent of zero-crossing snapping in the editor.
+    @Published var fadeDurationMilliseconds: Double = 10
+    /// Optional, off by default (docs/ROADMAP.md M10) — a small declick pass over the whole
+    /// track, distinct from the boundary fades above.
+    @Published var declickEnabled: Bool = false
     @Published private(set) var statuses: [UUID: TrackExportStatus] = [:]
     @Published private(set) var isExporting = false
     @Published private(set) var errorMessage: String?
@@ -75,6 +81,8 @@ final class ExportSession: ObservableObject {
             let template = fileNameTemplate
             let behavior = overwriteBehavior
             let bitDepth = bitDepth
+            let fadeDurationSeconds = fadeDurationMilliseconds / 1000
+            let declickEnabled = declickEnabled
 
             do {
                 // Export is blocking file I/O — run it off the main thread so the UI (including
@@ -88,7 +96,9 @@ final class ExportSession: ObservableObject {
                         to: destinationFolder,
                         fileNameTemplate: template,
                         overwriteBehavior: behavior,
-                        bitDepth: bitDepth
+                        bitDepth: bitDepth,
+                        fadeDurationSeconds: fadeDurationSeconds,
+                        declickEnabled: declickEnabled
                     )
                 }.value
                 switch outcome {
