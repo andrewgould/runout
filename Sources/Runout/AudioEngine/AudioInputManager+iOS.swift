@@ -19,6 +19,10 @@ final class IOSAudioInputManager: AudioInputManager {
         }
     }
 
+    func systemDefaultDeviceID() -> String? {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
+    }
+
     func applyInputDevice(_ device: AudioInputDevice, to engine: AVAudioEngine) throws {
         let session = AVAudioSession.sharedInstance()
         guard let port = session.availableInputs?.first(where: { $0.uid == device.id }) else {

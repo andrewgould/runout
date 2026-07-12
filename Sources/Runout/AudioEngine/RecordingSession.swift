@@ -11,6 +11,17 @@ enum RecordingState: Equatable {
     case paused
 }
 
+enum RecordingError: Error, LocalizedError {
+    case inputDeliveredNoAudio
+
+    var errorDescription: String? {
+        switch self {
+        case .inputDeliveredNoAudio:
+            return "The input device isn't delivering any audio. Check that Runout has microphone access (System Settings → Privacy & Security → Microphone) and that the device is connected and awake, or choose a different input."
+        }
+    }
+}
+
 /// Coordinates the input device, level metering, and file writing behind Screen 1
 /// (docs/UI_SPEC.md). Owns the one `AVAudioEngine` instance for a recording session.
 ///
@@ -37,6 +48,7 @@ final class RecordingSession: ObservableObject {
     private var recordingStartDate: Date?
     private var pausedAccumulatedSeconds: TimeInterval = 0
     private var sleepPreventionToken: NSObjectProtocol?
+    private var bufferFeed: OrderedBufferFeed?
 
     /// Assumed max side length used for the disk space estimate — see docs/FEATURES.md §1.
     private static let assumedMaxRecordingDuration: TimeInterval = 30 * 60
@@ -45,7 +57,11 @@ final class RecordingSession: ObservableObject {
         do {
             availableDevices = try inputManager.availableDevices()
             if selectedDevice == nil || !availableDevices.contains(where: { $0.id == selectedDevice?.id }) {
-                selectedDevice = availableDevices.first
+                // Preselect the system's default input, not just whichever device happens to
+                // enumerate first — it's what the user most likely expects, and it's the one
+                // device guaranteed to work without touching the engine's input routing.
+                let defaultID = inputManager.systemDefaultDeviceID()
+                selectedDevice = availableDevices.first(where: { $0.id == defaultID }) ?? availableDevices.first
             }
             lastError = nil
         } catch {
@@ -81,17 +97,32 @@ final class RecordingSession: ObservableObject {
             lastError = "No input device selected."
             return
         }
+        // Without this, an unauthorized app "records" an empty file: the engine starts fine but
+        // the tap never fires, so nothing downstream ever sees an error. Prompts on first use;
+        // returns immediately once the user has decided.
+        guard await AVCaptureDevice.requestAccess(for: .audio) else {
+            lastError = "Microphone access is denied. Enable it for Runout in System Settings → Privacy & Security → Microphone."
+            return
+        }
         do {
             try inputManager.applyInputDevice(device, to: engine)
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
             try await writer.start(url: url, sourceFormat: inputFormat, bitDepth: audioSettings.bitDepth)
 
-            engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-                guard let self else { return }
+            // Ordered handoff to the writer — never one Task per buffer, which has no ordering
+            // guarantee and can silently corrupt the master recording. See OrderedBufferFeed
+            // and docs/IMPROVEMENT_PLAN.md P0-1.
+            let feed = OrderedBufferFeed(
+                append: { [writer] buffer in try await writer.append(buffer) },
+                onFailure: { [weak self] error in await self?.recordingFailed(with: error) }
+            )
+            bufferFeed = feed
+
+            engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [levelMeter] buffer, _ in
                 // Real-time thread: only fast, allocation-light work happens here directly.
-                self.levelMeter.process(buffer)
+                levelMeter.process(buffer)
                 guard let copy = buffer.copy() else { return }
-                Task { try? await self.writer.append(copy) }
+                feed.yield(copy)
             }
 
             engine.prepare()
@@ -102,6 +133,7 @@ final class RecordingSession: ObservableObject {
             pausedAccumulatedSeconds = 0
             state = .recording
             startUIRefreshTimer()
+            startNoAudioWatchdog()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -133,6 +165,10 @@ final class RecordingSession: ObservableObject {
         guard state != .idle else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        // Drain every buffer the tap already delivered before closing the file, so the
+        // recording's final fraction of a second isn't dropped.
+        await bufferFeed?.finishAndDrain()
+        bufferFeed = nil
         await writer.stop()
         allowSleep()
         stopUIRefreshTimer()
@@ -140,6 +176,39 @@ final class RecordingSession: ObservableObject {
         recordingStartDate = nil
         pausedAccumulatedSeconds = 0
         elapsedSeconds = 0
+    }
+
+    /// An engine that starts but never delivers a buffer (mic permission missing, device asleep
+    /// or unplugged, or the macOS device-selection quirk documented in MacAudioInputManager) is
+    /// indistinguishable from a healthy silent recording in the UI — without this, the user
+    /// finds out 25 minutes later that their side is a 42-byte empty file. Frame counting, not
+    /// amplitude: genuine silence still delivers frames and never trips this.
+    private func startNoAudioWatchdog() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, self.state == .recording else { return }
+            if await self.writer.framesWritten == 0 {
+                await self.recordingFailed(with: RecordingError.inputDeliveredNoAudio)
+            }
+        }
+    }
+
+    /// A buffer append threw (disk full, volume ejected, …) — tear the recording down instead of
+    /// silently producing a truncated file (docs/FEATURES.md §1). The partial recording up to the
+    /// failure is closed properly and remains playable.
+    private func recordingFailed(with error: Error) async {
+        guard state != .idle else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        bufferFeed = nil
+        await writer.stop()
+        allowSleep()
+        stopUIRefreshTimer()
+        state = .idle
+        recordingStartDate = nil
+        pausedAccumulatedSeconds = 0
+        elapsedSeconds = 0
+        lastError = "Recording stopped: \(error.localizedDescription)"
     }
 
     func clearClipIndicators() {

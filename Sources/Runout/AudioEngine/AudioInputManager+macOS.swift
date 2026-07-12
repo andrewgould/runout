@@ -15,7 +15,29 @@ final class MacAudioInputManager: AudioInputManager {
         }
     }
 
+    func systemDefaultDeviceID() -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = AudioDeviceID(0)
+        var dataSize = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &deviceID)
+        guard status == noErr else { return nil }
+        return try? stringProperty(kAudioDevicePropertyDeviceUID, of: deviceID)
+    }
+
     func applyInputDevice(_ device: AudioInputDevice, to engine: AVAudioEngine) throws {
+        // When the chosen device IS the system default, leave the engine's input alone: a fresh
+        // AVAudioEngine input already follows the default via a system-managed aggregate
+        // ("CADefaultDeviceAggregate"), and explicitly setting kAudioOutputUnitProperty_CurrentDevice
+        // — even to that same physical device — has been observed (macOS 26, 2026-07) to stop tap
+        // delivery entirely, silently recording nothing. Verified against real hardware; see
+        // docs/IMPROVEMENT_PLAN.md P0-1's PR.
+        if device.id == systemDefaultDeviceID() {
+            return
+        }
         guard let deviceID = try deviceID(forUID: device.id) else {
             throw AudioInputManagerError.deviceUnavailable
         }

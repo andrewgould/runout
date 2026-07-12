@@ -32,6 +32,11 @@ protocol AudioInputManager: AnyObject {
     /// All currently connected input-capable devices/routes.
     func availableDevices() throws -> [AudioInputDevice]
 
+    /// The identifier of the system's current default input device, if determinable — used to
+    /// preselect it in the picker, and (on macOS) to know when the engine's own default-device
+    /// tracking should be left alone rather than overridden.
+    func systemDefaultDeviceID() -> String?
+
     /// Directs `engine`'s input to use `device`. `engine` must not be running when this is called.
     func applyInputDevice(_ device: AudioInputDevice, to engine: AVAudioEngine) throws
 }

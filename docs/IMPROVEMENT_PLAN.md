@@ -28,6 +28,38 @@ buffers under artificial load) proves order preservation; a forced write failure
 pointed at a full/removed volume) visibly stops the recording with an error rather than silently
 producing a truncated file.
 
+**Discovered while fixing this** (real-hardware verification of the fix flushed out three more
+members of the same "recording fails silently" bug class, all addressed in the same PR):
+- The app never requested microphone permission — an unauthorized install "records" a header-only
+  empty file with no error. Fixed: `AVCaptureDevice.requestAccess` before starting.
+- Explicitly setting the input device (`kAudioOutputUnitProperty_CurrentDevice`, and equally
+  `AUAudioUnit.setDeviceID`) stops tap delivery entirely on macOS 26 — even re-selecting the
+  system default. Fixed for the default-device case: when the chosen device *is* the system
+  default, the engine's own default-tracking aggregate is left alone (and the picker now
+  preselects the true system default, not whichever device enumerates first). **Selecting a
+  non-default device on this macOS version remains broken at the OS/AUHAL level** — see P1-5.
+- No detection of an input that delivers nothing (dead device, revoked permission, the above OS
+  bug): a 2-second frames-written watchdog now stops the recording with an actionable error
+  instead of letting it "record" nothing indefinitely.
+
+## P1-5 — Non-default input device selection is broken on macOS 26
+
+Verified on real hardware (2026-07-12): any explicit device set on the engine's input unit — via
+the legacy property or `AUAudioUnit.setDeviceID`, before `prepare()`/`start()`, to any device —
+results in zero tap callbacks on this OS version, while the untouched default-device aggregate
+captures fine. The P0-1 watchdog makes this loud (error within ~2s) rather than a silent empty
+side, and the default device works, but users can't record from a non-default input without
+changing the system default in System Settings (macOS's own Sound settings can do this).
+
+**Fix directions to investigate**: reproduce on a release macOS (is it specific to this beta?);
+try building an explicit `AVAudioSourceNode`/AUHAL capture unit outside `AVAudioEngine.inputNode`;
+file a Feedback with Apple; as a stopgap, surface "switch the default input in System Settings"
+guidance in the recording UI when a non-default device is chosen.
+
+**Acceptance**: recording from a deliberately non-default input device captures real audio, or —
+where the OS genuinely can't — the UI explains the limitation and the workaround before the user
+wastes a take.
+
 ## P0-2 — FLAC metadata block length silently overflows at 16 MB
 
 A FLAC metadata block header's length field is 24 bits (max 16,777,215 bytes).
