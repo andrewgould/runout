@@ -192,26 +192,28 @@ enum ExportPipeline {
     // MARK: - Cover art
 
     private static func loadPicture(from url: URL) throws -> FlacMetadataWriter.Picture {
-        let data: Data
+        let rawData: Data
         do {
-            data = try Data(contentsOf: url)
+            rawData = try Data(contentsOf: url)
         } catch {
             throw ExportError.couldNotReadCoverArt(error)
         }
 
-        var width = 0
-        var height = 0
-        if let image = PlatformImage(contentsOfFile: url.path) {
-            #if os(macOS)
-            width = Int(image.size.width)
-            height = Int(image.size.height)
-            #else
-            width = Int(image.size.width * image.scale)
-            height = Int(image.size.height * image.scale)
-            #endif
-        }
+        // User-imported art can be arbitrarily large; anything past FLAC's 16 MB block limit
+        // must be downscaled before embedding or the exported file would be corrupt
+        // (docs/IMPROVEMENT_PLAN.md P0-2).
+        let (data, fileExtension) = try CoverArtDownscaler.ensureEmbeddable(rawData, fileExtension: url.pathExtension)
 
-        return FlacMetadataWriter.Picture(mimeType: mimeType(forPathExtension: url.pathExtension), data: data, width: width, height: height)
+        // Dimensions come from the final (possibly downscaled) bytes — not the original file —
+        // so the PICTURE block's width/height always describe the image actually embedded.
+        let dimensions = CoverArtDownscaler.pixelDimensions(of: data)
+
+        return FlacMetadataWriter.Picture(
+            mimeType: mimeType(forPathExtension: fileExtension),
+            data: data,
+            width: dimensions?.width ?? 0,
+            height: dimensions?.height ?? 0
+        )
     }
 
     private static func mimeType(forPathExtension pathExtension: String) -> String {

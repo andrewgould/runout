@@ -42,7 +42,9 @@ final class CoverArtArchiveClient {
 
         let imageData = try await performRequest(url: imageURL)
         let fileExtension = imageURL.pathExtension.isEmpty ? "jpg" : imageURL.pathExtension
-        return (imageData, fileExtension)
+        // The archive serves original scans that can exceed FLAC's 16 MB metadata block limit —
+        // downscale here so oversized art never enters the project (docs/IMPROVEMENT_PLAN.md P0-2).
+        return try CoverArtDownscaler.ensureEmbeddable(imageData, fileExtension: fileExtension)
     }
 
     /// The Archive.org CDN sometimes lists image URLs with an `http` scheme even though it serves

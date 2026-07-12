@@ -3,11 +3,14 @@ import Foundation
 enum FlacMetadataError: Error, LocalizedError {
     case notAFlacFile
     case truncatedFile
+    case metadataBlockTooLarge(byteCount: Int)
 
     var errorDescription: String? {
         switch self {
         case .notAFlacFile: return "Not a valid FLAC file (missing \"fLaC\" marker)."
         case .truncatedFile: return "FLAC file is truncated or corrupt."
+        case .metadataBlockTooLarge(let byteCount):
+            return "A metadata block (\(byteCount) bytes) exceeds FLAC's 16 MB block limit — cover art this large must be downscaled before embedding."
         }
     }
 }
@@ -51,15 +54,15 @@ enum FlacMetadataWriter {
         let pictureData = picture.map(makePictureBlockData)
 
         // STREAMINFO is never the last block here, since our new blocks always follow it.
-        output.append(metadataBlockHeader(type: 0, isLast: false, length: streamInfo.count))
+        output.append(try metadataBlockHeader(type: 0, isLast: false, length: streamInfo.count))
         output.append(streamInfo)
 
         let isVorbisCommentLast = (pictureData == nil)
-        output.append(metadataBlockHeader(type: 4, isLast: isVorbisCommentLast, length: vorbisCommentData.count))
+        output.append(try metadataBlockHeader(type: 4, isLast: isVorbisCommentLast, length: vorbisCommentData.count))
         output.append(vorbisCommentData)
 
         if let pictureData {
-            output.append(metadataBlockHeader(type: 6, isLast: true, length: pictureData.count))
+            output.append(try metadataBlockHeader(type: 6, isLast: true, length: pictureData.count))
             output.append(pictureData)
         }
 
@@ -108,7 +111,16 @@ enum FlacMetadataWriter {
 
     // MARK: - Building new blocks
 
-    private static func metadataBlockHeader(type: UInt8, isLast: Bool, length: Int) -> Data {
+    /// A block header's length field is 24 bits. Silently bit-masking a larger length would
+    /// write a corrupt file (docs/IMPROVEMENT_PLAN.md P0-2), so an oversized block is a thrown
+    /// error — reachable in practice via very large cover art, which callers are expected to
+    /// downscale first (see CoverArtDownscaler).
+    static let maxBlockLength = 0xFFFFFF
+
+    private static func metadataBlockHeader(type: UInt8, isLast: Bool, length: Int) throws -> Data {
+        guard length <= Self.maxBlockLength else {
+            throw FlacMetadataError.metadataBlockTooLarge(byteCount: length)
+        }
         var header = Data(capacity: 4)
         header.append((isLast ? UInt8(0x80) : 0) | (type & 0x7F))
         header.append(UInt8((length >> 16) & 0xFF))

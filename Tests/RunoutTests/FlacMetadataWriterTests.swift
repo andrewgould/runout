@@ -100,6 +100,30 @@ final class FlacMetadataWriterTests: XCTestCase {
         XCTAssertEqual(parsedPicture.data, imageBytes)
     }
 
+    /// The 24-bit block-length regression (docs/IMPROVEMENT_PLAN.md P0-2): a picture past the
+    /// limit previously had its length silently bit-masked, writing a corrupt file. It must
+    /// throw — and must not have touched the file on disk.
+    func testOversizedPictureThrowsAndLeavesFileUntouched() async throws {
+        let url = try await makeSyntheticFlac()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let originalBytes = try Data(contentsOf: url)
+
+        let oversized = FlacMetadataWriter.Picture(
+            mimeType: "image/jpeg",
+            data: Data(count: FlacMetadataWriter.maxBlockLength + 1),
+            width: 9000,
+            height: 9000
+        )
+        XCTAssertThrowsError(try FlacMetadataWriter.write(tags: makeTags(), picture: oversized, to: url)) { error in
+            guard case FlacMetadataError.metadataBlockTooLarge = error else {
+                XCTFail("expected metadataBlockTooLarge, got \(error)")
+                return
+            }
+        }
+
+        XCTAssertEqual(try Data(contentsOf: url), originalBytes, "a failed write must leave the original file intact")
+    }
+
     func testAudioFrameBytesAreByteForByteIdenticalBeforeAndAfter() async throws {
         let url = try await makeSyntheticFlac(seconds: 0.5)
         defer { try? FileManager.default.removeItem(at: url) }
