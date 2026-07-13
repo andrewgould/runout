@@ -63,6 +63,14 @@ final class RunoutDocument: ReferenceFileDocument {
         workingDirectory = Self.makeWorkingDirectory()
     }
 
+    deinit {
+        // Scratch copies materialized for this document are dead weight once it closes — without
+        // this they accumulate in the container's tmp across every document ever opened
+        // (docs/IMPROVEMENT_PLAN.md P1-4). Safe here: lazy-ingested wrappers reference files in
+        // this directory, but no save can happen after deinit.
+        try? FileManager.default.removeItem(at: workingDirectory)
+    }
+
     private static func makeWorkingDirectory() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("RunoutWorkingCopies", isDirectory: true)
@@ -130,8 +138,14 @@ final class RunoutDocument: ReferenceFileDocument {
 
     /// Brings a scratch file (already on disk — e.g. a just-finished recording, a rebuilt peak
     /// cache, or new cover art) into the package as `path`, replacing any existing member there.
+    ///
+    /// The wrapper is deliberately lazy (no `.immediate`): audio members run to hundreds of MB
+    /// per side, and an eager read would pin every ingested side in RAM for the document's whole
+    /// lifetime (docs/IMPROVEMENT_PLAN.md P1-4). The trade: `localURL` must stay on disk until
+    /// the document is saved — which every caller satisfies by ingesting from this document's
+    /// own `workingDirectory`, cleaned up only in `deinit`.
     func ingestFile(at localURL: URL, asRelativePath path: String) throws {
-        let wrapper = try FileWrapper(url: localURL, options: .immediate)
+        let wrapper = try FileWrapper(url: localURL, options: [])
         wrapper.preferredFilename = (path as NSString).lastPathComponent
         fileWrappers[path] = wrapper
     }

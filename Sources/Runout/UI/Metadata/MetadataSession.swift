@@ -127,8 +127,10 @@ final class MetadataSession: ObservableObject {
         let relativePath = "artwork.\(fileExtension)"
         let scratchURL = document.scratchFileURL(named: "artwork-\(UUID().uuidString).\(fileExtension)")
         try data.write(to: scratchURL, options: .atomic)
+        // The scratch file must outlive the ingest: the document's file wrappers are lazy and
+        // read from it at save time. It's cleaned up with the rest of the working directory
+        // when the document closes.
         try document.ingestFile(at: scratchURL, asRelativePath: relativePath)
-        try? FileManager.default.removeItem(at: scratchURL)
 
         albumMetadata.coverArtRelativePath = relativePath
         coverArtURL = try document.materializedFileURL(forRelativePath: relativePath)
