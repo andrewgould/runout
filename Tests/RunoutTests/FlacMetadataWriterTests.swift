@@ -90,28 +90,44 @@ final class FlacMetadataWriterTests: XCTestCase {
     /// Direct evidence for docs/IMPROVEMENT_PLAN.md P1-7: two files requested at different bit
     /// depths through the exact writer path RecordingSession/ExportPipeline use are byte-for-byte
     /// identical, proving the requested depth has zero effect on the encoder's actual output.
-    func testBitDepthSettingCurrentlyHasNoEffectOnEncodedOutput() async throws {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) else {
-            return XCTFail("format")
-        }
-        var outputs: [Data] = []
+    /// docs/IMPROVEMENT_PLAN.md P1-7, now fixed: a float32 client format made
+    /// `AVLinearPCMBitDepthKey` a no-op regardless of what `settings` requested. The real fix is
+    /// the client format itself — `RecordingWriter`'s callers (`RecordingSession`,
+    /// `ExportPipeline`) now hand it an `.pcmFormatInt16` buffer for a 16-bit request. This test
+    /// exercises `RecordingWriter` exactly as those callers do (varying commonFormat, not just
+    /// the `bitDepth` int) and confirms the two outputs now genuinely differ and decode correctly.
+    func testMatchingClientFormatToBitDepthProducesARealDifference() async throws {
+        var outputsByBitDepth: [Int: Data] = [:]
         for bitDepth in [16, 24] {
+            let commonFormat: AVAudioCommonFormat = bitDepth == 16 ? .pcmFormatInt16 : .pcmFormatFloat32
+            guard let format = AVAudioFormat(commonFormat: commonFormat, sampleRate: 48_000, channels: 1, interleaved: false) else {
+                return XCTFail("format")
+            }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("flac")
             defer { try? FileManager.default.removeItem(at: url) }
             let writer = RecordingWriter()
             try await writer.start(url: url, sourceFormat: format, bitDepth: bitDepth)
+
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
             buffer.frameLength = 4800
             for i in 0..<4800 {
-                buffer.floatChannelData![0][i] = Float(sin(2.0 * Double.pi * 440 * Double(i) / 48_000)) * 0.5
+                let sample = sin(2.0 * Double.pi * 440.0 * Double(i) / 48_000.0) * 0.5
+                if bitDepth == 16 {
+                    buffer.int16ChannelData![0][i] = Int16((sample * 32767).rounded())
+                } else {
+                    buffer.floatChannelData![0][i] = Float(sample)
+                }
             }
             try await writer.append(buffer)
             await writer.stop()
-            outputs.append(try Data(contentsOf: url))
+            outputsByBitDepth[bitDepth] = try Data(contentsOf: url)
+
+            let readDepth = try FlacMetadataWriter.readBitDepth(ofFileAt: url)
+            XCTAssertEqual(readDepth, bitDepth, "STREAMINFO must report the depth actually requested")
         }
-        // If this ever starts failing, the bit-depth setting has started working — update
-        // readBitDepth's callers' expectations and remove this test alongside fixing P1-7.
-        XCTAssertEqual(outputs[0], outputs[1], "documents current (broken) behavior — see P1-7")
+
+        XCTAssertNotEqual(outputsByBitDepth[16], outputsByBitDepth[24], "16-bit and 24-bit output must now genuinely differ")
+        XCTAssertLessThan(outputsByBitDepth[16]!.count, outputsByBitDepth[24]!.count, "16-bit encoding of the same audio should be smaller")
     }
 
     /// Confirms the real, live bug this fix addresses: AVAudioFile's own settings dictionary

@@ -144,8 +144,13 @@ final class RecordingSession: ObservableObject {
             try inputManager.applyInputDevice(device, to: engine)
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
 
+            // The client format's own commonFormat (not the FLAC settings dict) is what actually
+            // determines encoded bit depth — see RecordingWriter and docs/IMPROVEMENT_PLAN.md
+            // P1-7. A real 16-bit file needs an Int16 client format; a real 24-bit file uses the
+            // existing float32 path (already proven byte-identical/lossless).
+            let commonFormat: AVAudioCommonFormat = audioSettings.bitDepth == 16 ? .pcmFormatInt16 : .pcmFormatFloat32
             guard let targetFormat = AVAudioFormat(
-                commonFormat: .pcmFormatFloat32,
+                commonFormat: commonFormat,
                 sampleRate: audioSettings.sampleRate,
                 channels: AVAudioChannelCount(audioSettings.channelCount),
                 interleaved: false
