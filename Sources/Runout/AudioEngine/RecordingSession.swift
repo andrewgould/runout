@@ -13,11 +13,17 @@ enum RecordingState: Equatable {
 
 enum RecordingError: Error, LocalizedError {
     case inputDeliveredNoAudio
+    case inputStalled
+    case diskSpaceCriticallyLow
 
     var errorDescription: String? {
         switch self {
         case .inputDeliveredNoAudio:
             return "The input device isn't delivering any audio. Check that Runout has microphone access (System Settings → Privacy & Security → Microphone) and that the device is connected and awake, or choose a different input."
+        case .inputStalled:
+            return "The input device stopped delivering audio partway through — it may have been disconnected, gone to sleep, or been reconfigured. The recording up to this point has been saved."
+        case .diskSpaceCriticallyLow:
+            return "Recording stopped because free disk space ran critically low. The recording up to this point has been saved."
         }
     }
 }
@@ -52,9 +58,17 @@ final class RecordingSession: ObservableObject {
     private var pausedAccumulatedSeconds: TimeInterval = 0
     private var sleepPreventionToken: NSObjectProtocol?
     private var bufferFeed: OrderedBufferFeed?
+    private var stallMonitorTask: Task<Void, Never>?
+    private var recordingURL: URL?
+    private var lastCriticalDiskCheckDate: Date?
 
     /// Assumed max side length used for the disk space estimate — see docs/FEATURES.md §1.
     private static let assumedMaxRecordingDuration: TimeInterval = 30 * 60
+    /// Below this, stop rather than risk a write failing mid-buffer — docs/FEATURES.md §1
+    /// "warn/stop gracefully rather than crash if space actually runs out."
+    private static let criticalFreeSpaceBytes: Double = 50_000_000
+    private static let criticalDiskCheckInterval: TimeInterval = 5.0
+    private static let stallCheckInterval: TimeInterval = 2.0
 
     /// Loads previously-saved format/device settings for this project (docs/FEATURES.md §1
     /// "remember the last choice per project") — call before the first `refreshDevices()` so its
@@ -158,11 +172,13 @@ final class RecordingSession: ObservableObject {
             try engine.start()
 
             preventSleep()
+            recordingURL = url
+            lastCriticalDiskCheckDate = nil
             recordingStartDate = Date()
             pausedAccumulatedSeconds = 0
             state = .recording
             startUIRefreshTimer()
-            startNoAudioWatchdog()
+            startStallMonitor()
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -192,6 +208,8 @@ final class RecordingSession: ObservableObject {
 
     func stopRecording() async {
         guard state != .idle else { return }
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         // Drain every buffer the tap already delivered before closing the file, so the
@@ -205,19 +223,46 @@ final class RecordingSession: ObservableObject {
         recordingStartDate = nil
         pausedAccumulatedSeconds = 0
         elapsedSeconds = 0
+        recordingURL = nil
     }
 
-    /// An engine that starts but never delivers a buffer (mic permission missing, device asleep
-    /// or unplugged, or the macOS device-selection quirk documented in MacAudioInputManager) is
-    /// indistinguishable from a healthy silent recording in the UI — without this, the user
-    /// finds out 25 minutes later that their side is a 42-byte empty file. Frame counting, not
-    /// amplitude: genuine silence still delivers frames and never trips this.
-    private func startNoAudioWatchdog() {
-        Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard let self, self.state == .recording else { return }
-            if await self.writer.framesWritten == 0 {
-                await self.recordingFailed(with: RecordingError.inputDeliveredNoAudio)
+    /// An engine that stops delivering buffers — at the very start (mic permission missing,
+    /// device asleep, or the macOS device-selection quirk documented in MacAudioInputManager) or
+    /// partway through (device disconnected, put to sleep, or reconfigured) — is indistinguishable
+    /// from a healthy (possibly silent) recording anywhere else in the UI. Runs for the whole
+    /// recording, not just a one-shot check at start, so a stall 10 minutes in is caught just as
+    /// fast as one at frame zero. Frame counting, not amplitude: genuine silence still delivers
+    /// frames and never trips this.
+    ///
+    /// Deliberately doesn't observe `AVAudioEngineConfigurationChangeNotification`: that fires for
+    /// plenty of benign reasons (unrelated devices connecting elsewhere, transparent sample-rate
+    /// renegotiation) and reacting to it directly risks stopping a perfectly healthy recording.
+    /// Frame delivery is the ground truth for "is this still working," so it's the only signal
+    /// used here.
+    private func startStallMonitor() {
+        stallMonitorTask?.cancel()
+        stallMonitorTask = Task { [weak self] in
+            var lastKnownFrameCount: AVAudioFramePosition = 0
+            while true {
+                try? await Task.sleep(nanoseconds: UInt64(Self.stallCheckInterval * 1_000_000_000))
+                if Task.isCancelled { return }
+                guard let self else { return }
+
+                guard self.state == .recording else {
+                    if self.state == .idle { return }
+                    // Paused: keep the baseline current so resuming doesn't immediately read as
+                    // a stall against a long-stale frame count.
+                    lastKnownFrameCount = await self.writer.framesWritten
+                    continue
+                }
+
+                let current = await self.writer.framesWritten
+                if current == lastKnownFrameCount {
+                    let error: RecordingError = current == 0 ? .inputDeliveredNoAudio : .inputStalled
+                    await self.recordingFailed(with: error)
+                    return
+                }
+                lastKnownFrameCount = current
             }
         }
     }
@@ -227,6 +272,8 @@ final class RecordingSession: ObservableObject {
     /// failure is closed properly and remains playable.
     private func recordingFailed(with error: Error) async {
         guard state != .idle else { return }
+        stallMonitorTask?.cancel()
+        stallMonitorTask = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         bufferFeed = nil
@@ -237,6 +284,7 @@ final class RecordingSession: ObservableObject {
         recordingStartDate = nil
         pausedAccumulatedSeconds = 0
         elapsedSeconds = 0
+        recordingURL = nil
         lastError = "Recording stopped: \(error.localizedDescription)"
     }
 
@@ -267,6 +315,25 @@ final class RecordingSession: ObservableObject {
         channelLevels = levelMeter.channelLevels
         if state == .recording, let start = recordingStartDate {
             elapsedSeconds = pausedAccumulatedSeconds + Date().timeIntervalSince(start)
+        }
+        checkCriticalDiskSpaceIfDue()
+    }
+
+    /// Piggybacks on the existing 20Hz UI timer but throttles the actual `statfs` call to once
+    /// every few seconds — docs/FEATURES.md §1 "continuously re-check during recording," not
+    /// just the one-time estimate before starting.
+    private func checkCriticalDiskSpaceIfDue() {
+        guard state == .recording, let url = recordingURL else { return }
+        let now = Date()
+        if let last = lastCriticalDiskCheckDate, now.timeIntervalSince(last) < Self.criticalDiskCheckInterval { return }
+        lastCriticalDiskCheckDate = now
+
+        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+              let available = values.volumeAvailableCapacityForImportantUsage
+        else { return }
+
+        if Double(available) < Self.criticalFreeSpaceBytes {
+            Task { [weak self] in await self?.recordingFailed(with: RecordingError.diskSpaceCriticallyLow) }
         }
     }
 
