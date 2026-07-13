@@ -81,6 +81,26 @@ final class AudioFormatConverterTests: XCTestCase {
         }
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P1-7: RecordingSession now requests an Int16 client format when
+    /// the user picks 16-bit recording — the converter must actually handle float32 -> int16,
+    /// since this is the real production path that makes a 16-bit recording genuinely 16-bit.
+    func testConvertsFloat32ToInt16WithRealSignal() throws {
+        let input = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
+        let output = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48_000, channels: 1, interleaved: false)!
+        let converter = try AudioFormatConverter(from: input, to: output)
+
+        let inputBuffer = makeToneBuffer(format: input, frameCount: 4800)
+        let outputBuffer = try converter.convert(inputBuffer)
+
+        XCTAssertEqual(outputBuffer.format.commonFormat, .pcmFormatInt16)
+        var peak: Int16 = 0
+        let data = outputBuffer.int16ChannelData![0]
+        for i in 0..<Int(outputBuffer.frameLength) {
+            peak = max(peak, abs(data[i]))
+        }
+        XCTAssertGreaterThan(peak, 1000, "converted output must contain real signal at roughly the expected amplitude, not silence or garbage")
+    }
+
     func testIdentityFormatPassesAudioThroughEssentiallyUnchanged() throws {
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 96_000, channels: 2, interleaved: false)!
         let converter = try AudioFormatConverter(from: format, to: format)

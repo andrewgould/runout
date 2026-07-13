@@ -9,8 +9,14 @@ import Foundation
 /// docs/ARCHITECTURE.md (Concurrency model) for why this matters.
 ///
 /// Writes native FLAC (`kAudioFormatFLAC`, supported by Core Audio since macOS 11 / iOS 14 — no
-/// vendored libFLAC, see docs/ARCHITECTURE.md). Tap buffers arrive as float32 PCM; the encoder
-/// quantizes to `bitDepth`-bit integer samples as it writes, so `bitDepth` must be 16 or 24.
+/// vendored libFLAC, see docs/ARCHITECTURE.md).
+///
+/// `sourceFormat`'s own `commonFormat` — not `bitDepth` in `settings` — is what actually
+/// determines the encoded bit depth: Core Audio's FLAC encoder was found to ignore
+/// `AVLinearPCMBitDepthKey` entirely for a float32 client format, always encoding at a fixed
+/// precision regardless of what `settings` requested (docs/IMPROVEMENT_PLAN.md P1-7). Callers
+/// that want a real 16-bit file must hand buffers already in `.pcmFormatInt16` — see
+/// `RecordingSession`/`ExportPipeline`, which both quantize before appending.
 actor RecordingWriter {
     private var audioFile: AVAudioFile?
     private(set) var framesWritten: AVAudioFramePosition = 0
@@ -24,7 +30,7 @@ actor RecordingWriter {
         audioFile = try AVAudioFile(
             forWriting: url,
             settings: settings,
-            commonFormat: .pcmFormatFloat32,
+            commonFormat: sourceFormat.commonFormat,
             interleaved: sourceFormat.isInterleaved
         )
         framesWritten = 0

@@ -118,10 +118,14 @@ enum ExportPipeline {
             channelCount: format.channelCount,
             bitDepth: bitDepth
         )
+        // The client format's own commonFormat — not the settings dict's bitDepth — is what
+        // actually determines the encoded bit depth (docs/IMPROVEMENT_PLAN.md P1-7): a real
+        // 16-bit file needs an Int16 client format, quantized just before each write.
+        let outputCommonFormat: AVAudioCommonFormat = bitDepth == 16 ? .pcmFormatInt16 : .pcmFormatFloat32
         let outputFile = try AVAudioFile(
             forWriting: url,
             settings: settings,
-            commonFormat: .pcmFormatFloat32,
+            commonFormat: outputCommonFormat,
             interleaved: format.isInterleaved
         )
 
@@ -154,7 +158,7 @@ enum ExportPipeline {
                 chunk = zip(declickers, chunk).map { declicker, samples in declicker.process(samples) }
             }
             framesWritten += try writeProcessedChunk(
-                &chunk, format: format, to: outputFile,
+                &chunk, format: format, to: outputFile, outputCommonFormat: outputCommonFormat,
                 outputOffset: framesWritten, totalFrameCount: totalFrameCount, fadeSampleCount: fadeSampleCount
             )
         }
@@ -162,18 +166,20 @@ enum ExportPipeline {
         if let declickers {
             var tail = declickers.map { $0.flush() }
             framesWritten += try writeProcessedChunk(
-                &tail, format: format, to: outputFile,
+                &tail, format: format, to: outputFile, outputCommonFormat: outputCommonFormat,
                 outputOffset: framesWritten, totalFrameCount: totalFrameCount, fadeSampleCount: fadeSampleCount
             )
         }
     }
 
     /// Applies fades (positioned by `outputOffset` within the whole track) and writes one
-    /// processed chunk. Returns the number of frames written.
+    /// processed chunk, quantizing to Int16 first when `outputCommonFormat` calls for it.
+    /// Returns the number of frames written.
     private static func writeProcessedChunk(
         _ channels: inout [[Float]],
         format: AVAudioFormat,
         to outputFile: AVAudioFile,
+        outputCommonFormat: AVAudioCommonFormat,
         outputOffset: Int64,
         totalFrameCount: Int64,
         fadeSampleCount: Int
@@ -189,6 +195,24 @@ enum ExportPipeline {
                     fadeSampleCount: fadeSampleCount
                 )
             }
+        }
+
+        if outputCommonFormat == .pcmFormatInt16 {
+            guard let clientFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: format.sampleRate, channels: format.channelCount, interleaved: false),
+                  let buffer = AVAudioPCMBuffer(pcmFormat: clientFormat, frameCapacity: AVAudioFrameCount(frameCount)),
+                  let channelData = buffer.int16ChannelData
+            else {
+                throw ExportError.couldNotCreateOutputFile
+            }
+            for (channel, samples) in channels.enumerated() {
+                let quantized = PCMQuantizer.quantizeToInt16(samples)
+                quantized.withUnsafeBufferPointer { source in
+                    channelData[channel].update(from: source.baseAddress!, count: frameCount)
+                }
+            }
+            buffer.frameLength = AVAudioFrameCount(frameCount)
+            try outputFile.write(from: buffer)
+            return Int64(frameCount)
         }
 
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),

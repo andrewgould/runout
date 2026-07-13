@@ -129,6 +129,43 @@ final class ExportPipelineTests: XCTestCase {
         XCTAssertEqual(comments["DATE"], "1969")
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P1-7: exporting at 16-bit must produce a genuinely 16-bit file
+    /// (via the Int16 client-format path in writeProcessedChunk), not silently re-encode at
+    /// 24-bit regardless of the requested depth.
+    func testExportAtSixteenBitProducesARealSixteenBitFile() throws {
+        let track = makeTrack(title: "Sixteen Bit", number: 1, startSecond: 0, endSecond: 1)
+        let album = AlbumMetadata(albumTitle: "Test Album", albumArtist: "Test Artist")
+
+        let outcome16 = try ExportPipeline.exportTrack(
+            track, from: masterURL, album: album, coverArtURL: nil,
+            to: destinationFolder, fileNameTemplate: "16bit", overwriteBehavior: .overwrite, bitDepth: 16
+        )
+        let outcome24 = try ExportPipeline.exportTrack(
+            track, from: masterURL, album: album, coverArtURL: nil,
+            to: destinationFolder, fileNameTemplate: "24bit", overwriteBehavior: .overwrite, bitDepth: 24
+        )
+        guard case .exported(let url16) = outcome16, case .exported(let url24) = outcome24 else {
+            return XCTFail("expected both exports to succeed")
+        }
+
+        XCTAssertEqual(try FlacMetadataWriter.readBitDepth(ofFileAt: url16), 16)
+        XCTAssertEqual(try FlacMetadataWriter.readBitDepth(ofFileAt: url24), 24)
+
+        let size16 = try FileManager.default.attributesOfItem(atPath: url16.path)[.size] as! Int
+        let size24 = try FileManager.default.attributesOfItem(atPath: url24.path)[.size] as! Int
+        XCTAssertLessThan(size16, size24, "16-bit export of the same audio should be smaller")
+
+        // Must still be real, decodable, non-silent audio — not just a smaller broken file.
+        let file16 = try AVAudioFile(forReading: url16)
+        XCTAssertGreaterThan(file16.length, 0)
+        let buffer = AVAudioPCMBuffer(pcmFormat: file16.processingFormat, frameCapacity: AVAudioFrameCount(file16.length))!
+        try file16.read(into: buffer, frameCount: AVAudioFrameCount(file16.length))
+        var peak: Float = 0
+        let data = buffer.floatChannelData![0]
+        for i in 0..<Int(buffer.frameLength) { peak = max(peak, abs(data[i])) }
+        XCTAssertGreaterThan(peak, 0.1, "16-bit export must contain real audio, not silence")
+    }
+
     /// docs/IMPROVEMENT_PLAN.md P2-2: composer was modeled on Track but never reached the
     /// exported file, and TRACKTOTAL/DISCTOTAL were never written at all.
     func testComposerAndTotalsReachTheExportedFile() throws {
