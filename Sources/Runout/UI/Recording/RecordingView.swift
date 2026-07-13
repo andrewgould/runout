@@ -22,6 +22,8 @@ struct RecordingView: View {
 
             devicePicker
 
+            formatRow
+
             metersRow
 
             transportRow
@@ -47,8 +49,15 @@ struct RecordingView: View {
         .padding(28)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
+            // Restore before refreshDevices() so it can preselect the remembered device
+            // (docs/FEATURES.md §1 "remember the last choice per project").
+            session.restoreSettings(document.project.audioSettings)
             session.refreshDevices()
-            session.checkDiskSpace(at: document.workingDirectory, settings: .defaultSettings)
+            session.checkDiskSpace(at: document.workingDirectory, settings: session.audioSettings)
+        }
+        .onChange(of: session.audioSettings) { _, newValue in
+            document.project.audioSettings = newValue
+            session.checkDiskSpace(at: document.workingDirectory, settings: newValue)
         }
     }
 
@@ -60,6 +69,33 @@ struct RecordingView: View {
         }
         .labelsHidden()
         .frame(maxWidth: 320)
+        .disabled(session.state != .idle)
+    }
+
+    /// Sample rate × bit depth × channel count (docs/FEATURES.md §1) — the one format choice
+    /// previously not exposed at all; only bit depth was reachable, buried in `AudioSettings`.
+    private var formatRow: some View {
+        HStack(spacing: 16) {
+            Picker("Sample Rate", selection: $session.audioSettings.sampleRate) {
+                Text("44.1 kHz").tag(44_100.0)
+                Text("48 kHz").tag(48_000.0)
+                Text("96 kHz").tag(96_000.0)
+                Text("192 kHz").tag(192_000.0)
+            }
+            .frame(maxWidth: 160)
+
+            Picker("Bit Depth", selection: $session.audioSettings.bitDepth) {
+                Text("16-bit").tag(16)
+                Text("24-bit").tag(24)
+            }
+            .frame(maxWidth: 130)
+
+            Picker("Channels", selection: $session.audioSettings.channelCount) {
+                Text("Mono").tag(1)
+                Text("Stereo").tag(2)
+            }
+            .frame(maxWidth: 130)
+        }
         .disabled(session.state != .idle)
     }
 

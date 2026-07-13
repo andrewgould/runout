@@ -25,13 +25,16 @@ enum RecordingError: Error, LocalizedError {
 /// Coordinates the input device, level metering, and file writing behind Screen 1
 /// (docs/UI_SPEC.md). Owns the one `AVAudioEngine` instance for a recording session.
 ///
-/// Records native FLAC (see RecordingWriter). Sample rate/channel count follow the input
-/// device's current native format (see `applyInputDevice`); explicit negotiation of those is a
-/// fast-follow. `bitDepth` (16 or 24) is the one format choice already exposed, via `audioSettings`.
+/// Records native FLAC (see RecordingWriter). `audioSettings` (sample rate × bit depth × channel
+/// count, docs/FEATURES.md §1) is the format actually written: the tap runs at the device's own
+/// native format (required — AVAudioEngine only taps in that format) and every buffer is
+/// converted to `audioSettings` before it reaches the writer, via `AudioFormatConverter`.
 @MainActor
 final class RecordingSession: ObservableObject {
     @Published private(set) var availableDevices: [AudioInputDevice] = []
-    @Published var selectedDevice: AudioInputDevice?
+    @Published var selectedDevice: AudioInputDevice? {
+        didSet { audioSettings.inputDeviceUID = selectedDevice?.id ?? "" }
+    }
     @Published var audioSettings: AudioSettings = .defaultSettings
     @Published private(set) var state: RecordingState = .idle
     @Published private(set) var channelLevels: [ChannelLevel] = []
@@ -53,15 +56,25 @@ final class RecordingSession: ObservableObject {
     /// Assumed max side length used for the disk space estimate — see docs/FEATURES.md §1.
     private static let assumedMaxRecordingDuration: TimeInterval = 30 * 60
 
+    /// Loads previously-saved format/device settings for this project (docs/FEATURES.md §1
+    /// "remember the last choice per project") — call before the first `refreshDevices()` so its
+    /// device preselection can honor the remembered device UID.
+    func restoreSettings(_ settings: AudioSettings) {
+        audioSettings = settings
+    }
+
     func refreshDevices() {
         do {
             availableDevices = try inputManager.availableDevices()
             if selectedDevice == nil || !availableDevices.contains(where: { $0.id == selectedDevice?.id }) {
-                // Preselect the system's default input, not just whichever device happens to
-                // enumerate first — it's what the user most likely expects, and it's the one
-                // device guaranteed to work without touching the engine's input routing.
+                // Prefer this project's remembered device, then the system default, then
+                // whichever enumerates first — the default is the one device guaranteed to work
+                // without touching the engine's input routing (see MacAudioInputManager).
+                let rememberedID = audioSettings.inputDeviceUID
                 let defaultID = inputManager.systemDefaultDeviceID()
-                selectedDevice = availableDevices.first(where: { $0.id == defaultID }) ?? availableDevices.first
+                selectedDevice = availableDevices.first(where: { $0.id == rememberedID })
+                    ?? availableDevices.first(where: { $0.id == defaultID })
+                    ?? availableDevices.first
             }
             lastError = nil
         } catch {
@@ -107,19 +120,35 @@ final class RecordingSession: ObservableObject {
         do {
             try inputManager.applyInputDevice(device, to: engine)
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
-            try await writer.start(url: url, sourceFormat: inputFormat, bitDepth: audioSettings.bitDepth)
+
+            guard let targetFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: audioSettings.sampleRate,
+                channels: AVAudioChannelCount(audioSettings.channelCount),
+                interleaved: false
+            ) else {
+                lastError = "Invalid recording format."
+                return
+            }
+            let converter = try AudioFormatConverter(from: inputFormat, to: targetFormat)
+            try await writer.start(url: url, sourceFormat: targetFormat, bitDepth: audioSettings.bitDepth)
 
             // Ordered handoff to the writer — never one Task per buffer, which has no ordering
             // guarantee and can silently corrupt the master recording. See OrderedBufferFeed
-            // and docs/IMPROVEMENT_PLAN.md P0-1.
+            // and docs/IMPROVEMENT_PLAN.md P0-1. Format conversion happens here (the async
+            // consumer), not on the tap thread, keeping the real-time callback allocation-light.
             let feed = OrderedBufferFeed(
-                append: { [writer] buffer in try await writer.append(buffer) },
+                append: { [writer] buffer in
+                    try await writer.append(try converter.convert(buffer))
+                },
                 onFailure: { [weak self] error in await self?.recordingFailed(with: error) }
             )
             bufferFeed = feed
 
             engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [levelMeter] buffer, _ in
                 // Real-time thread: only fast, allocation-light work happens here directly.
+                // Metering reads the device's actual native-format buffer, ahead of any
+                // downmix/upmix — showing the real input, not the chosen output channel count.
                 levelMeter.process(buffer)
                 guard let copy = buffer.copy() else { return }
                 feed.yield(copy)
