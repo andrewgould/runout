@@ -31,6 +31,11 @@ enum FlacMetadataWriter {
         var date: String?
         var genre: String?
         var comment: String?
+        var composer: String? = nil
+        /// Total tracks on this disc (docs/IMPROVEMENT_PLAN.md P2-2) — omitted when `nil` or
+        /// not positive, since "TRACKTOTAL=0" is worse than no tag at all.
+        var trackTotal: Int? = nil
+        var discTotal: Int? = nil
     }
 
     struct Picture {
@@ -177,16 +182,21 @@ enum FlacMetadataWriter {
         data.append(contentsOf: Array(vendor.utf8))
 
         var comments: [String] = [
-            "TITLE=\(tags.title)",
-            "ARTIST=\(tags.artist)",
-            "ALBUM=\(tags.album)",
-            "ALBUMARTIST=\(tags.albumArtist)",
             "TRACKNUMBER=\(tags.trackNumber)",
             "DISCNUMBER=\(tags.discNumber)",
         ]
+        // Required-ish fields still get skipped when blank (docs/IMPROVEMENT_PLAN.md P3) —
+        // an empty "TITLE=" is noise no player wants, same as the optional fields below.
+        if !tags.title.isEmpty { comments.append("TITLE=\(tags.title)") }
+        if !tags.artist.isEmpty { comments.append("ARTIST=\(tags.artist)") }
+        if !tags.album.isEmpty { comments.append("ALBUM=\(tags.album)") }
+        if !tags.albumArtist.isEmpty { comments.append("ALBUMARTIST=\(tags.albumArtist)") }
         if let date = tags.date, !date.isEmpty { comments.append("DATE=\(date)") }
         if let genre = tags.genre, !genre.isEmpty { comments.append("GENRE=\(genre)") }
         if let comment = tags.comment, !comment.isEmpty { comments.append("COMMENT=\(comment)") }
+        if let composer = tags.composer, !composer.isEmpty { comments.append("COMPOSER=\(composer)") }
+        if let trackTotal = tags.trackTotal, trackTotal > 0 { comments.append("TRACKTOTAL=\(trackTotal)") }
+        if let discTotal = tags.discTotal, discTotal > 0 { comments.append("DISCTOTAL=\(discTotal)") }
 
         appendUInt32LE(UInt32(comments.count), to: &data)
         for comment in comments {

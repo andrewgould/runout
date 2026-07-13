@@ -129,6 +129,27 @@ final class ExportPipelineTests: XCTestCase {
         XCTAssertEqual(comments["DATE"], "1969")
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P2-2: composer was modeled on Track but never reached the
+    /// exported file, and TRACKTOTAL/DISCTOTAL were never written at all.
+    func testComposerAndTotalsReachTheExportedFile() throws {
+        var track = makeTrack(title: "A Day in the Life", number: 1, startSecond: 0, endSecond: 1)
+        track.composer = "Lennon-McCartney"
+        var album = AlbumMetadata(albumTitle: "Sgt. Pepper's", albumArtist: "The Beatles")
+        album.discCount = 1
+
+        let outcome = try ExportPipeline.exportTrack(
+            track, from: masterURL, album: album, coverArtURL: nil,
+            to: destinationFolder, fileNameTemplate: "{trackNumber} - {title}",
+            overwriteBehavior: .appendNumber, bitDepth: 24, trackTotal: 13
+        )
+        guard case .exported(let outputURL) = outcome else { return XCTFail("Expected .exported") }
+
+        let comments = try readVorbisComments(from: outputURL)
+        XCTAssertEqual(comments["COMPOSER"], "Lennon-McCartney")
+        XCTAssertEqual(comments["TRACKTOTAL"], "13")
+        XCTAssertEqual(comments["DISCTOTAL"], "1")
+    }
+
     func testOverwriteBehaviorSkipDoesNotWriteWhenFileExists() throws {
         let track = makeTrack(title: "Track", number: 1, startSecond: 0, endSecond: 1)
         let album = AlbumMetadata(albumTitle: "Album", albumArtist: "Artist")

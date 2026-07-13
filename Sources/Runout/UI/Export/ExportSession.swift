@@ -83,6 +83,7 @@ final class ExportSession: ObservableObject {
             let bitDepth = bitDepth
             let fadeDurationSeconds = fadeDurationMilliseconds / 1000
             let declickEnabled = declickEnabled
+            let trackTotal = tracks.filter { $0.discNumber == track.discNumber }.count
 
             do {
                 // Export is blocking file I/O — run it off the main thread so the UI (including
@@ -98,7 +99,8 @@ final class ExportSession: ObservableObject {
                         overwriteBehavior: behavior,
                         bitDepth: bitDepth,
                         fadeDurationSeconds: fadeDurationSeconds,
-                        declickEnabled: declickEnabled
+                        declickEnabled: declickEnabled,
+                        trackTotal: trackTotal
                     )
                 }.value
                 switch outcome {

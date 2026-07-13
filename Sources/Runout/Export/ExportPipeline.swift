@@ -35,7 +35,11 @@ enum ExportPipeline {
         overwriteBehavior: OverwriteBehavior,
         bitDepth: Int,
         fadeDurationSeconds: Double = 0.010,
-        declickEnabled: Bool = false
+        declickEnabled: Bool = false,
+        /// Total tracks on `track`'s disc, for the TRACKTOTAL tag (docs/IMPROVEMENT_PLAN.md
+        /// P2-2) — the caller's job since only it knows the full track list; omitted (no
+        /// TRACKTOTAL tag) when not positive.
+        trackTotal: Int = 0
     ) throws -> ExportOutcome {
         let baseName = FileNameTemplate.resolve(fileNameTemplate, track: track, album: album)
         let resolution = try resolveOutputURL(
@@ -73,7 +77,10 @@ enum ExportPipeline {
                 discNumber: track.discNumber,
                 date: track.year ?? album.year,
                 genre: track.genre ?? album.genre,
-                comment: track.comment
+                comment: track.comment,
+                composer: track.composer,
+                trackTotal: trackTotal > 0 ? trackTotal : nil,
+                discTotal: album.discCount > 0 ? album.discCount : nil
             )
             let picture = try coverArtURL.map { try loadPicture(from: $0) }
             try FlacMetadataWriter.write(tags: tags, picture: picture, to: tempURL)
