@@ -60,6 +60,28 @@ guidance in the recording UI when a non-default device is chosen.
 where the OS genuinely can't — the UI explains the limitation and the workaround before the user
 wastes a take.
 
+## P1-6 — pause()/resume() may not reliably resume frame delivery on this macOS build
+
+Discovered while verifying P2-3's continuous stall monitor (2026-07-13): in one real-hardware
+run, `pauseRecording()` followed by `resumeRecording()` on the system-default device resulted in
+zero further frames reaching the writer — the recording's final decoded length matched *exactly*
+the pre-pause duration, with `state` staying `.recording` (the monitor correctly caught this as a
+stall a few seconds later, rather than silently producing a truncated file). This looks like the
+same family of issue as P1-5 (`AVAudioEngine` input reliability on this specific OS build), not a
+new independent bug, and wasn't reproducible on demand in a follow-up isolated run within this
+session (the follow-up test runs hung indefinitely instead, for reasons that look like this
+sandboxed environment's TCC prompt handling rather than the app itself — see the note in P2-3's
+verification below).
+
+**Fix directions to investigate**: reproduce deliberately on real (non-sandboxed) hardware with a
+person at the keyboard; if confirmed, consider dropping `engine.pause()`/`engine.start()` in favor
+of tearing down and reinstalling the tap on resume (mirroring what `startRecording` already does),
+which sidesteps whatever state `pause()` leaves the input unit in.
+
+**Acceptance**: pause then resume a real recording several times in a row; every segment
+continues capturing real audio with no gap beyond the intended pause, confirmed by ear and by
+inspecting the waveform around each pause point.
+
 ## P0-2 — FLAC metadata block length silently overflows at 16 MB
 
 A FLAC metadata block header's length field is 24 bits (max 16,777,215 bytes).
