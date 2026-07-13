@@ -70,6 +70,34 @@ final class FlacMetadataWriterTests: XCTestCase {
         XCTAssertEqual(comments["COMMENT"], "Ripped with Runout")
     }
 
+    func testComposerAndTotalsRoundTripThroughIndependentParsing() async throws {
+        let url = try await makeSyntheticFlac()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var tags = makeTags()
+        tags.composer = "George Martin"
+        tags.trackTotal = 17
+        tags.discTotal = 2
+        try FlacMetadataWriter.write(tags: tags, picture: nil, to: url)
+
+        let comments = try readVorbisComments(from: url)
+        XCTAssertEqual(comments["COMPOSER"], "George Martin")
+        XCTAssertEqual(comments["TRACKTOTAL"], "17")
+        XCTAssertEqual(comments["DISCTOTAL"], "2")
+    }
+
+    func testOmitsNonPositiveOrNilTotalsRatherThanWritingZero() async throws {
+        let url = try await makeSyntheticFlac()
+        defer { try? FileManager.default.removeItem(at: url) }
+        var tags = makeTags()
+        tags.trackTotal = 0
+        tags.discTotal = nil
+        try FlacMetadataWriter.write(tags: tags, picture: nil, to: url)
+
+        let comments = try readVorbisComments(from: url)
+        XCTAssertNil(comments["TRACKTOTAL"])
+        XCTAssertNil(comments["DISCTOTAL"])
+    }
+
     func testOmitsEmptyOptionalFieldsRatherThanWritingBlankValues() async throws {
         let url = try await makeSyntheticFlac()
         defer { try? FileManager.default.removeItem(at: url) }

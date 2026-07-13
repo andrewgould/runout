@@ -271,6 +271,14 @@ private struct MetadataWorkspaceView: View {
                 labeledField("Track #", text: trackNumberBinding(track), width: 80)
                 labeledField("Disc #", text: discNumberBinding(track), width: 80)
             }
+
+            HStack(spacing: 12) {
+                labeledField("Genre", text: optionalTrackBinding(track, \.genre), width: nil, placeholder: session.albumMetadata.genre ?? "")
+                labeledField("Year", text: optionalTrackBinding(track, \.year), width: 100, placeholder: session.albumMetadata.year ?? "")
+                labeledField("Composer", text: optionalTrackBinding(track, \.composer))
+            }
+
+            labeledField("Comment", text: optionalTrackBinding(track, \.comment))
         }
     }
 
