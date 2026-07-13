@@ -49,4 +49,30 @@ final class FadeApplierTests: XCTestCase {
         XCTAssertEqual(FadeApplier.sampleCount(forDurationSeconds: 0, sampleRate: 44100), 0)
         XCTAssertEqual(FadeApplier.sampleCount(forDurationSeconds: 0.010, sampleRate: 0), 0)
     }
+
+    /// The chunked form (docs/IMPROVEMENT_PLAN.md P1-2) must match the whole-array form exactly
+    /// no matter where the chunk boundaries fall — including boundaries inside a fade region.
+    func testChunkedFadesMatchWholeArrayAcrossChunkings() {
+        let samples = (0..<10_000).map { i in Float(sin(Double(i) * 0.05)) }
+        let fadeSampleCount = 441
+        let reference = FadeApplier.applyFades(to: samples, fadeSampleCount: fadeSampleCount)
+
+        for chunkSize in [1, 100, 441, 500, 9_999, 10_000] {
+            var output: [Float] = []
+            var offset = 0
+            while offset < samples.count {
+                let end = min(offset + chunkSize, samples.count)
+                var chunk = Array(samples[offset..<end])
+                FadeApplier.applyFades(
+                    to: &chunk,
+                    chunkStartIndex: Int64(offset),
+                    totalSampleCount: Int64(samples.count),
+                    fadeSampleCount: fadeSampleCount
+                )
+                output.append(contentsOf: chunk)
+                offset = end
+            }
+            XCTAssertEqual(output, reference, "chunk size \(chunkSize) diverged from the whole-array fade")
+        }
+    }
 }

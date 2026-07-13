@@ -3,24 +3,40 @@ import Foundation
 /// Applies a short linear fade-in/fade-out at track boundaries during export (docs/FEATURES.md
 /// §2) — a second line of defense against clicks at cut points, independent of zero-crossing
 /// snapping in the editor.
+///
+/// The chunk-based form exists so the export pipeline can stream a track without holding it all
+/// in memory (docs/IMPROVEMENT_PLAN.md P1-2): a fade only ever touches the first and last
+/// `fadeSampleCount` samples, so each streamed chunk just needs to know its own offset within
+/// the track.
 enum FadeApplier {
-    /// Applies fades to `samples` in place, returning the modified array. `fadeSampleCount` is
-    /// clamped to at most half the track's length so a fade-in and fade-out never overlap.
+    /// Applies fades in place to one chunk of a longer track. `chunkStartIndex` is the chunk's
+    /// first sample's index within the whole track of `totalSampleCount` samples. The fade
+    /// length is clamped to at most half the track so fade-in and fade-out never overlap.
+    static func applyFades(
+        to chunk: inout [Float],
+        chunkStartIndex: Int64,
+        totalSampleCount: Int64,
+        fadeSampleCount: Int
+    ) {
+        guard fadeSampleCount > 0, totalSampleCount > 0, !chunk.isEmpty else { return }
+        let clamped = Int64(min(Int64(fadeSampleCount), totalSampleCount / 2))
+        guard clamped > 0 else { return }
+
+        let fadeOutStart = totalSampleCount - clamped
+        for offset in 0..<chunk.count {
+            let globalIndex = chunkStartIndex + Int64(offset)
+            if globalIndex < clamped {
+                chunk[offset] *= Float(globalIndex) / Float(clamped)
+            } else if globalIndex >= fadeOutStart {
+                chunk[offset] *= Float(totalSampleCount - 1 - globalIndex) / Float(clamped)
+            }
+        }
+    }
+
+    /// Whole-array convenience (also the reference the chunked form is tested against).
     static func applyFades(to samples: [Float], fadeSampleCount: Int) -> [Float] {
-        guard fadeSampleCount > 0, !samples.isEmpty else { return samples }
-
-        let clampedCount = min(fadeSampleCount, samples.count / 2)
-        guard clampedCount > 0 else { return samples }
-
         var output = samples
-        for i in 0..<clampedCount {
-            let gain = Float(i) / Float(clampedCount)
-            output[i] *= gain
-        }
-        for i in 0..<clampedCount {
-            let gain = Float(i) / Float(clampedCount)
-            output[output.count - 1 - i] *= gain
-        }
+        applyFades(to: &output, chunkStartIndex: 0, totalSampleCount: Int64(samples.count), fadeSampleCount: fadeSampleCount)
         return output
     }
 

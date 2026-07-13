@@ -41,72 +41,109 @@ enum FlacMetadataWriter {
         var colorDepth: Int = 24
     }
 
-    /// Rewrites the FLAC file at `url` in place (via a temp file + atomic replace) to carry
-    /// `tags` and, if provided, `picture`.
-    static func write(tags: Tags, picture: Picture?, to url: URL) throws {
-        let sourceData = try Data(contentsOf: url)
-        let (audioFramesOffset, streamInfo) = try parseStreamInfoAndFindAudioOffset(in: sourceData)
+    /// How much audio data to move per read/write while splicing — bounds memory regardless of
+    /// track length (docs/IMPROVEMENT_PLAN.md P1-2).
+    private static let copyChunkSizeInBytes = 4 << 20
 
-        var output = Data()
-        output.append(contentsOf: Array("fLaC".utf8))
+    /// Rewrites the FLAC file at `url` in place (via a temp file + atomic replace) to carry
+    /// `tags` and, if provided, `picture`. Only the metadata region is ever held in memory; the
+    /// audio frames are streamed through a bounded buffer, so a full-side track costs the same
+    /// memory as a jingle.
+    static func write(tags: Tags, picture: Picture?, to url: URL) throws {
+        let (audioFramesOffset, streamInfo) = try parseStreamInfoAndFindAudioOffset(at: url)
+
+        // Assemble (and bounds-check) the entire new metadata region before creating any file,
+        // so a failed write can never leave a stray temp file or touch the original.
+        var header = Data()
+        header.append(contentsOf: Array("fLaC".utf8))
 
         let vorbisCommentData = makeVorbisCommentBlockData(tags: tags)
         let pictureData = picture.map(makePictureBlockData)
 
         // STREAMINFO is never the last block here, since our new blocks always follow it.
-        output.append(try metadataBlockHeader(type: 0, isLast: false, length: streamInfo.count))
-        output.append(streamInfo)
+        header.append(try metadataBlockHeader(type: 0, isLast: false, length: streamInfo.count))
+        header.append(streamInfo)
 
         let isVorbisCommentLast = (pictureData == nil)
-        output.append(try metadataBlockHeader(type: 4, isLast: isVorbisCommentLast, length: vorbisCommentData.count))
-        output.append(vorbisCommentData)
+        header.append(try metadataBlockHeader(type: 4, isLast: isVorbisCommentLast, length: vorbisCommentData.count))
+        header.append(vorbisCommentData)
 
         if let pictureData {
-            output.append(try metadataBlockHeader(type: 6, isLast: true, length: pictureData.count))
-            output.append(pictureData)
+            header.append(try metadataBlockHeader(type: 6, isLast: true, length: pictureData.count))
+            header.append(pictureData)
         }
 
-        output.append(sourceData[audioFramesOffset...])
-
         let tempURL = url.appendingPathExtension("tmp-\(UUID().uuidString)")
-        try output.write(to: tempURL, options: .atomic)
+        do {
+            guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
+                throw FlacMetadataError.truncatedFile
+            }
+            let output = try FileHandle(forWritingTo: tempURL)
+            defer { try? output.close() }
+            let input = try FileHandle(forReadingFrom: url)
+            defer { try? input.close() }
+
+            try output.write(contentsOf: header)
+            try input.seek(toOffset: UInt64(audioFramesOffset))
+            while let chunk = try input.read(upToCount: copyChunkSizeInBytes), !chunk.isEmpty {
+                try output.write(contentsOf: chunk)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw error
+        }
         _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
     }
 
     // MARK: - Parsing existing blocks
 
-    /// Walks every existing metadata block, returning `STREAMINFO`'s raw data (header stripped,
-    /// unchanged) and the byte offset where audio frames begin. Any other existing block —
-    /// including a `VORBIS_COMMENT` `AVAudioFile` may already have written — is discarded;
-    /// Runout always writes its own from scratch rather than trying to merge into it.
-    private static func parseStreamInfoAndFindAudioOffset(in data: Data) throws -> (audioFramesOffset: Int, streamInfo: Data) {
-        let magic = Array("fLaC".utf8)
-        guard data.count >= magic.count, data[data.startIndex..<data.startIndex + magic.count].elementsEqual(magic) else {
+    /// Walks every existing metadata block via seeks — never reading the audio frames —
+    /// returning `STREAMINFO`'s raw data (header stripped, unchanged) and the byte offset where
+    /// audio frames begin. Any other existing block — including a `VORBIS_COMMENT` `AVAudioFile`
+    /// may already have written — is discarded; Runout always writes its own from scratch rather
+    /// than trying to merge into it.
+    private static func parseStreamInfoAndFindAudioOffset(at url: URL) throws -> (audioFramesOffset: Int, streamInfo: Data) {
+        let input = try FileHandle(forReadingFrom: url)
+        defer { try? input.close() }
+
+        func readExactly(_ count: Int) throws -> Data {
+            guard let data = try input.read(upToCount: count), data.count == count else {
+                throw FlacMetadataError.truncatedFile
+            }
+            return data
+        }
+
+        guard try readExactly(4).elementsEqual(Array("fLaC".utf8)) else {
             throw FlacMetadataError.notAFlacFile
         }
 
-        var offset = data.startIndex + magic.count
         var streamInfo: Data?
-
         while true {
-            guard offset + 4 <= data.endIndex else { throw FlacMetadataError.truncatedFile }
-            let headerByte = data[offset]
+            let blockHeader = try readExactly(4)
+            let headerByte = blockHeader[blockHeader.startIndex]
             let isLast = (headerByte & 0x80) != 0
             let blockType = headerByte & 0x7F
-            let length = Int(data[offset + 1]) << 16 | Int(data[offset + 2]) << 8 | Int(data[offset + 3])
-            let blockDataStart = offset + 4
-            guard blockDataStart + length <= data.endIndex else { throw FlacMetadataError.truncatedFile }
+            let length = Int(blockHeader[blockHeader.startIndex + 1]) << 16
+                | Int(blockHeader[blockHeader.startIndex + 2]) << 8
+                | Int(blockHeader[blockHeader.startIndex + 3])
 
             if blockType == 0 {
-                streamInfo = data.subdata(in: blockDataStart..<blockDataStart + length)
+                streamInfo = try readExactly(length)
+            } else {
+                let next = try input.offset() + UInt64(length)
+                try input.seek(toOffset: next)
             }
 
-            offset = blockDataStart + length
-            if isLast { break }
+            if isLast {
+                guard let streamInfo else { throw FlacMetadataError.truncatedFile }
+                let audioFramesOffset = Int(try input.offset())
+                // The offset must actually exist in the file — a length field pointing past EOF
+                // is corruption the byte-oriented seek above wouldn't have caught.
+                let fileSize = try input.seekToEnd()
+                guard UInt64(audioFramesOffset) <= fileSize else { throw FlacMetadataError.truncatedFile }
+                return (audioFramesOffset, streamInfo)
+            }
         }
-
-        guard let streamInfo else { throw FlacMetadataError.truncatedFile }
-        return (offset, streamInfo)
     }
 
     // MARK: - Building new blocks
