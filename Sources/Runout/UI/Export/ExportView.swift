@@ -46,7 +46,11 @@ struct ExportView: View {
             let fileURL = try document.materializedFileURL(forRelativePath: side.masterFileRelativePath)
             let (length, depth) = try await Task.detached(priority: .userInitiated) { () -> (Int64, Int) in
                 let file = try AVAudioFile(forReading: fileURL)
-                let depth = file.fileFormat.settings[AVLinearPCMBitDepthKey] as? Int ?? 24
+                // AVLinearPCMBitDepthKey is absent from fileFormat.settings for FLAC sources in
+                // practice — read the real value from STREAMINFO instead, so a 16-bit recording
+                // can't silently be relabeled (and exported) as 24-bit. See
+                // docs/IMPROVEMENT_PLAN.md P3.
+                let depth = try FlacMetadataWriter.readBitDepth(ofFileAt: fileURL)
                 return (file.length, depth)
             }.value
             recordingFileURL = fileURL
@@ -147,7 +151,9 @@ private struct ExportWorkspaceView: View {
     }
 
     private var formatSummary: some View {
-        Text("FLAC · lossless · \(bitDepth)-bit — passthrough, no re-encode")
+        // Not "no re-encode": the slice is decoded and losslessly re-encoded, and a fade (if
+        // enabled) alters samples at each track's edges — see docs/IMPROVEMENT_PLAN.md P3.
+        Text("FLAC · lossless · \(bitDepth)-bit")
             .font(.caption)
             .foregroundStyle(.secondary)
     }

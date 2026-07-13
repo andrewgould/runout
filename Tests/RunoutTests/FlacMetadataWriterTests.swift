@@ -70,6 +70,60 @@ final class FlacMetadataWriterTests: XCTestCase {
         XCTAssertEqual(comments["COMMENT"], "Ripped with Runout")
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P3: AVLinearPCMBitDepthKey is absent from a real FLAC file's
+    /// fileFormat.settings (confirmed empirically against a real written file), so callers must
+    /// read the true bit depth from STREAMINFO instead of trusting that key.
+    /// Reads back whatever bit depth a real file was ACTUALLY encoded at — this test
+    /// deliberately doesn't assert a specific number, because (see docs/IMPROVEMENT_PLAN.md
+    /// P1-7, discovered while writing this test) `AVLinearPCMBitDepthKey` currently has no
+    /// effect on Core Audio's FLAC encoder for a float32 source: files requested at 16-bit and
+    /// 24-bit come out byte-for-byte identical. `readBitDepth` is correct regardless — it
+    /// reports what a file really contains, which is the whole point of not trusting a wrong
+    /// guess — this test just pins that its answer is self-consistent and sane.
+    func testReadBitDepthReportsASaneValueForARealFile() async throws {
+        let url = try await makeSyntheticFlac()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let readDepth = try FlacMetadataWriter.readBitDepth(ofFileAt: url)
+        XCTAssertTrue([16, 24].contains(readDepth), "expected a real, standard bit depth, got \(readDepth)")
+    }
+
+    /// Direct evidence for docs/IMPROVEMENT_PLAN.md P1-7: two files requested at different bit
+    /// depths through the exact writer path RecordingSession/ExportPipeline use are byte-for-byte
+    /// identical, proving the requested depth has zero effect on the encoder's actual output.
+    func testBitDepthSettingCurrentlyHasNoEffectOnEncodedOutput() async throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1) else {
+            return XCTFail("format")
+        }
+        var outputs: [Data] = []
+        for bitDepth in [16, 24] {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("flac")
+            defer { try? FileManager.default.removeItem(at: url) }
+            let writer = RecordingWriter()
+            try await writer.start(url: url, sourceFormat: format, bitDepth: bitDepth)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800)!
+            buffer.frameLength = 4800
+            for i in 0..<4800 {
+                buffer.floatChannelData![0][i] = Float(sin(2.0 * Double.pi * 440 * Double(i) / 48_000)) * 0.5
+            }
+            try await writer.append(buffer)
+            await writer.stop()
+            outputs.append(try Data(contentsOf: url))
+        }
+        // If this ever starts failing, the bit-depth setting has started working — update
+        // readBitDepth's callers' expectations and remove this test alongside fixing P1-7.
+        XCTAssertEqual(outputs[0], outputs[1], "documents current (broken) behavior — see P1-7")
+    }
+
+    /// Confirms the real, live bug this fix addresses: AVAudioFile's own settings dictionary
+    /// doesn't carry the bit depth for a FLAC source, so any code trusting it needs a real
+    /// fallback (STREAMINFO), not a guessed default.
+    func testAVLinearPCMBitDepthKeyIsAbsentFromRealFlacFileFormat() async throws {
+        let url = try await makeSyntheticFlac()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let file = try AVAudioFile(forReading: url)
+        XCTAssertNil(file.fileFormat.settings[AVLinearPCMBitDepthKey], "if this ever starts passing, ExportView's fallback logic can be simplified")
+    }
+
     func testComposerAndTotalsRoundTripThroughIndependentParsing() async throws {
         let url = try await makeSyntheticFlac()
         defer { try? FileManager.default.removeItem(at: url) }

@@ -53,7 +53,7 @@ final class MusicBrainzClient {
     func search(artist: String, album: String) async throws -> [MusicBrainzReleaseSummary] {
         var components = URLComponents(string: "https://musicbrainz.org/ws/2/release/")!
         components.queryItems = [
-            URLQueryItem(name: "query", value: "artist:\(artist) AND release:\"\(album)\""),
+            URLQueryItem(name: "query", value: "artist:\(Self.escapeForLuceneQuery(artist)) AND release:\"\(Self.escapeForLuceneQuery(album))\""),
             URLQueryItem(name: "fmt", value: "json"),
             URLQueryItem(name: "limit", value: "10"),
         ]
@@ -65,6 +65,23 @@ final class MusicBrainzClient {
         let url = URL(string: "https://musicbrainz.org/ws/2/release/\(releaseID)?inc=recordings+artist-credits&fmt=json")!
         let data = try await performRequest(url: url)
         return try Self.parseReleaseDetail(data)
+    }
+
+    /// MusicBrainz's search endpoint uses Lucene query syntax — an unescaped special character
+    /// in a title/artist (e.g. the literal quotes in `"Heroes"`, or a colon) breaks the query
+    /// instead of matching literally (docs/IMPROVEMENT_PLAN.md P3). Backslash-escaping every
+    /// Lucene special character makes arbitrary user text safe to embed.
+    static func escapeForLuceneQuery(_ value: String) -> String {
+        let specialCharacters = Set("+-&&||!(){}[]^\"~*?:\\/")
+        var escaped = ""
+        escaped.reserveCapacity(value.count)
+        for character in value {
+            if specialCharacters.contains(character) {
+                escaped.append("\\")
+            }
+            escaped.append(character)
+        }
+        return escaped
     }
 
     private func performRequest(url: URL) async throws -> Data {

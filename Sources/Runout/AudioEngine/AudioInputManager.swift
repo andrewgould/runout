@@ -39,6 +39,16 @@ protocol AudioInputManager: AnyObject {
 
     /// Directs `engine`'s input to use `device`. `engine` must not be running when this is called.
     func applyInputDevice(_ device: AudioInputDevice, to engine: AVAudioEngine) throws
+
+    /// Invokes `onChange` (always on the main queue) whenever the set of available input
+    /// devices/routes changes — a device plugged/unplugged on macOS, a route change on iOS
+    /// (docs/IMPROVEMENT_PLAN.md P3: the picker previously only refreshed on screen appear).
+    /// Calling this again replaces any previously-registered handler.
+    func startObservingDeviceChanges(_ onChange: @escaping () -> Void)
+
+    /// Stops any observation started by `startObservingDeviceChanges`. Safe to call even if
+    /// observation was never started.
+    func stopObservingDeviceChanges()
 }
 
 #if os(macOS)

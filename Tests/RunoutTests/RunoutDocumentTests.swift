@@ -183,6 +183,18 @@ final class RunoutDocumentTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: packageURL.appendingPathComponent("payload.bin")), payload)
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P3: modifiedAt never updated, so every saved manifest carried
+    /// its creation timestamp forever, regardless of when it was actually last saved.
+    func testSnapshotStampsAFreshModifiedAtWithoutMutatingProject() throws {
+        let document = RunoutDocument()
+        let originalModifiedAt = document.project.modifiedAt
+
+        let snapshot = try document.snapshot(contentType: .runoutProject)
+
+        XCTAssertGreaterThan(snapshot.modifiedAt, originalModifiedAt)
+        XCTAssertEqual(document.project.modifiedAt, originalModifiedAt, "snapshot must not mutate the published project itself")
+    }
+
     func testWorkingDirectoryIsRemovedWhenDocumentCloses() throws {
         var document: RunoutDocument? = RunoutDocument()
         let workingDirectory = document!.workingDirectory

@@ -80,7 +80,14 @@ final class RunoutDocument: ReferenceFileDocument {
     }
 
     func snapshot(contentType: UTType) throws -> Project {
-        project
+        // Stamps a fresh save timestamp on the snapshot handed to serialization, never on
+        // `project` itself — `snapshot` can run off the main actor, and mutating a `@Published`
+        // property from there would be a real concurrency bug. `project.modifiedAt` otherwise
+        // never updated (docs/IMPROVEMENT_PLAN.md P3), so every saved manifest carried its
+        // creation time forever.
+        var snapshot = project
+        snapshot.modifiedAt = Date()
+        return snapshot
     }
 
     func fileWrapper(snapshot: Project, configuration: WriteConfiguration) throws -> FileWrapper {

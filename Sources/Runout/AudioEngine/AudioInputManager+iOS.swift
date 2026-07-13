@@ -4,6 +4,26 @@ import Foundation
 
 /// AVAudioSession route/port enumeration and selection.
 final class IOSAudioInputManager: AudioInputManager {
+    private var routeChangeObserver: NSObjectProtocol?
+
+    func startObservingDeviceChanges(_ onChange: @escaping () -> Void) {
+        stopObservingDeviceChanges()
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { _ in onChange() }
+    }
+
+    func stopObservingDeviceChanges() {
+        if let observer = routeChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            routeChangeObserver = nil
+        }
+    }
+
+    deinit {
+        stopObservingDeviceChanges()
+    }
+
     func availableDevices() throws -> [AudioInputDevice] {
         let session = AVAudioSession.sharedInstance()
         do {
