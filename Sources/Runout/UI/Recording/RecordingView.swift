@@ -123,17 +123,19 @@ struct RecordingView: View {
         return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }
 
-    private func slugAndLabel(forSideIndex index: Int) -> (slug: String, label: String) {
-        let letter = String(UnicodeScalar(UInt8(65 + min(index, 25))))
-        return ("side-\(letter.lowercased())", "Side \(letter)")
+    private func nextSideNaming() -> (slug: String, label: String) {
+        SideNaming.nextAvailable(
+            existingMasterPaths: Set(document.project.sides.map(\.masterFileRelativePath)),
+            startingIndex: document.project.sides.count
+        )
     }
 
     private var nextSideLabel: String {
-        slugAndLabel(forSideIndex: document.project.sides.count).label
+        nextSideNaming().label
     }
 
     private func startRecording() {
-        let pending = slugAndLabel(forSideIndex: document.project.sides.count)
+        let pending = nextSideNaming()
         pendingSide = pending
         let url = document.scratchFileURL(named: "\(pending.slug).flac")
         currentScratchURL = url
