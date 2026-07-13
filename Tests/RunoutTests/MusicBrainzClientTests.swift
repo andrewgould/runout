@@ -36,6 +36,16 @@ final class MusicBrainzClientTests: XCTestCase {
         XCTAssertEqual(detail.tracks[2].title, "Maxwell\u{2019}s Silver Hammer")
     }
 
+    /// docs/IMPROVEMENT_PLAN.md P3: an unescaped Lucene special character in the search text
+    /// (quotes, colons, etc.) breaks the query instead of matching literally.
+    func testEscapeForLuceneQueryEscapesSpecialCharacters() {
+        XCTAssertEqual(MusicBrainzClient.escapeForLuceneQuery("\"Heroes\""), "\\\"Heroes\\\"")
+        XCTAssertEqual(MusicBrainzClient.escapeForLuceneQuery("Rock: The Album"), "Rock\\: The Album")
+        XCTAssertEqual(MusicBrainzClient.escapeForLuceneQuery("AC/DC"), "AC\\/DC")
+        XCTAssertEqual(MusicBrainzClient.escapeForLuceneQuery("Simon & Garfunkel"), "Simon \\& Garfunkel")
+        XCTAssertEqual(MusicBrainzClient.escapeForLuceneQuery("Plain Text"), "Plain Text", "text with nothing special must pass through unchanged")
+    }
+
     func testParsingGarbageThrowsDecodingFailed() {
         let garbage = Data("not json at all".utf8)
         XCTAssertThrowsError(try MusicBrainzClient.parseSearchResults(garbage)) { error in

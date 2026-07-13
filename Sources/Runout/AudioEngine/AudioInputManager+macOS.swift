@@ -5,6 +5,39 @@ import Foundation
 
 /// Core Audio (AudioObjectID) device enumeration and selection.
 final class MacAudioInputManager: AudioInputManager {
+    private var deviceChangeListenerBlock: AudioObjectPropertyListenerBlock?
+
+    private var deviceListPropertyAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    func startObservingDeviceChanges(_ onChange: @escaping () -> Void) {
+        stopObservingDeviceChanges()
+        var address = deviceListPropertyAddress
+        let block: AudioObjectPropertyListenerBlock = { _, _ in onChange() }
+        // The block is dispatched onto this queue directly by CoreAudio, so `onChange` (which
+        // touches @MainActor state in RecordingSession) always lands on the main thread.
+        let status = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
+        if status == noErr {
+            deviceChangeListenerBlock = block
+        }
+    }
+
+    func stopObservingDeviceChanges() {
+        guard let block = deviceChangeListenerBlock else { return }
+        var address = deviceListPropertyAddress
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
+        deviceChangeListenerBlock = nil
+    }
+
+    deinit {
+        stopObservingDeviceChanges()
+    }
+
     func availableDevices() throws -> [AudioInputDevice] {
         try allDeviceIDs().compactMap { deviceID in
             guard try inputChannelCount(of: deviceID) > 0 else { return nil }

@@ -31,7 +31,7 @@ See [`docs/FEATURES.md`](docs/FEATURES.md) for the full feature spec, including 
 
 ## Status
 
-M0-M7 are done: record → view the waveform → split into tracks → tag → export to lossless FLAC, all backed by a real `.runout` document (open/save/iCloud Drive sync via SwiftUI's `DocumentGroup`, no more ad-hoc sidecar files). Every milestone has been verified against real audio hardware, not just synthetic test data. Remaining stretch goals (silence-based auto-split, MusicBrainz lookup, declick/decrackle, release polish) are tracked in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The full roadmap (M0-M11) is done: record → view the waveform → split into tracks → tag → export to lossless FLAC, all backed by a real `.runout` document (open/save/iCloud Drive sync via SwiftUI's `DocumentGroup`, no more ad-hoc sidecar files), plus every stretch goal — silence-based auto-split, MusicBrainz + Cover Art Archive lookup, configurable fades and declick, accessibility/keyboard shortcuts, and a signed/notarized release pipeline. Every milestone has been verified against real audio hardware, not just synthetic test data. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the build history and [`docs/IMPROVEMENT_PLAN.md`](docs/IMPROVEMENT_PLAN.md) for an ongoing post-launch hardening pass.
 
 ## Documentation
 

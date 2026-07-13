@@ -77,7 +77,16 @@ final class RecordingSession: ObservableObject {
         audioSettings = settings
     }
 
+    private var isObservingDeviceChanges = false
+
     func refreshDevices() {
+        // Started lazily on first call (RecordingView's onAppear) rather than in init, since
+        // starting it unconditionally would fire for every RecordingSession ever constructed,
+        // including ones a test creates and never uses.
+        if !isObservingDeviceChanges {
+            isObservingDeviceChanges = true
+            inputManager.startObservingDeviceChanges { [weak self] in self?.refreshDevices() }
+        }
         do {
             availableDevices = try inputManager.availableDevices()
             if selectedDevice == nil || !availableDevices.contains(where: { $0.id == selectedDevice?.id }) {
@@ -286,6 +295,10 @@ final class RecordingSession: ObservableObject {
         elapsedSeconds = 0
         recordingURL = nil
         lastError = "Recording stopped: \(error.localizedDescription)"
+    }
+
+    deinit {
+        inputManager.stopObservingDeviceChanges()
     }
 
     func clearClipIndicators() {

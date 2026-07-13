@@ -100,6 +100,29 @@ enum FlacMetadataWriter {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
     }
 
+    /// The real bit depth a FLAC file was encoded at, read directly from its `STREAMINFO` block
+    /// rather than `AVAudioFile.fileFormat.settings[AVLinearPCMBitDepthKey]` — that key is
+    /// absent for FLAC sources in practice (docs/IMPROVEMENT_PLAN.md P3), so code that read it
+    /// with a `?? 24` fallback silently mislabeled every file, 16-bit recordings included.
+    static func readBitDepth(ofFileAt url: URL) throws -> Int {
+        let (_, streamInfo) = try parseStreamInfoAndFindAudioOffset(at: url)
+        return try Self.bitsPerSample(fromStreamInfo: streamInfo)
+    }
+
+    /// `STREAMINFO`'s sample-rate/channel-count/bits-per-sample/total-samples fields are packed
+    /// together into a 64-bit big-endian region (20 + 3 + 5 + 36 bits) starting at byte 10 — see
+    /// the FLAC format spec's STREAMINFO layout. Bits-per-sample is stored minus one.
+    static func bitsPerSample(fromStreamInfo streamInfo: Data) throws -> Int {
+        guard streamInfo.count >= 18 else { throw FlacMetadataError.truncatedFile }
+        let base = streamInfo.startIndex + 10
+        var packed: UInt64 = 0
+        for i in 0..<8 {
+            packed = (packed << 8) | UInt64(streamInfo[base + i])
+        }
+        let bitsPerSampleMinusOne = (packed >> 36) & 0x1F
+        return Int(bitsPerSampleMinusOne) + 1
+    }
+
     // MARK: - Parsing existing blocks
 
     /// Walks every existing metadata block via seeks — never reading the audio frames —

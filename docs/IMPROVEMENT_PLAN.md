@@ -82,6 +82,38 @@ which sidesteps whatever state `pause()` leaves the input unit in.
 continues capturing real audio with no gap beyond the intended pause, confirmed by ear and by
 inspecting the waveform around each pause point.
 
+## P1-7 — The bit-depth setting has no effect on the encoded file
+
+Discovered while fixing the P3 "read the real bit depth from STREAMINFO" item (2026-07-13):
+`AVLinearPCMBitDepthKey` in `FlacSettings.writingSettings` turns out to have **zero effect** on
+Core Audio's FLAC encoder when the source is float32 PCM (which every write in this app is —
+`RecordingWriter` and `ExportPipeline` both use `commonFormat: .pcmFormatFloat32` throughout).
+Proven directly: two files written through the exact same `RecordingWriter` path, one requesting
+16-bit and one requesting 24-bit, are **byte-for-byte identical**, and both decode as 24-bit in
+`STREAMINFO`. This means the 16-bit option in the M2-era `AudioSettings.bitDepth` field, the
+recording format picker added in P2-1, and the export bit-depth plumbing have never actually
+produced a 16-bit file — every recording and export has always been 24-bit regardless of what the
+user picked, silently.
+
+This is more than a labeling bug (unlike the STREAMINFO-reading fix, which is correct and stays):
+the feature itself doesn't work. `readBitDepth` in this same PR now honestly reports "24" in both
+cases rather than trusting a wrong guess, which is strictly better than before, but doesn't make
+16-bit recording real.
+
+**Fix directions to investigate**: Core Audio's FLAC encoder likely picks subframe bit depth from
+the *input* format, not the output settings dict, for a float source — try writing with
+`commonFormat: .pcmFormatInt16` (pre-quantized integer buffers) when `bitDepth == 16` instead of
+always `.pcmFormatFloat32`. This ripples: `Declicker` and `FadeApplier` currently assume `[Float]`
+throughout the export pipeline, so either they'd need an Int16 path too, or the quantization step
+would need to happen only at the final write (after fades/declick run on float data, immediately
+before handing buffers to `AVAudioFile`) — the latter is probably the smaller change. Scope this
+as its own milestone with real A/B file-size and `metaflac`-reported-bit-depth verification, not a
+drive-by fix.
+
+**Acceptance**: a recording made with "16-bit" selected produces a file that `metaflac --list`
+(or equivalent) reports as 16 bits per sample, and is meaningfully smaller on disk than the same
+audio at 24-bit for a source that doesn't need the extra precision.
+
 ## P0-2 — FLAC metadata block length silently overflows at 16 MB
 
 A FLAC metadata block header's length field is 24 bits (max 16,777,215 bytes).
