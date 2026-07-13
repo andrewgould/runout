@@ -91,6 +91,11 @@ enum ExportPipeline {
 
     // MARK: - PCM slicing
 
+    /// Streams `[startSample, endSample)` from the source to the output in bounded chunks —
+    /// never the whole track in memory (docs/IMPROVEMENT_PLAN.md P1-2). Fades touch only a
+    /// chunk's overlap with the track's first/last `fadeSampleCount` samples, and declicking
+    /// goes through `StreamingDeclicker`, whose output is byte-identical to the whole-array
+    /// form but lags input by at most one threshold block.
     private static func writeSlice(
         from sourceFile: AVAudioFile,
         format: AVAudioFormat,
@@ -113,80 +118,85 @@ enum ExportPipeline {
             interleaved: format.isInterleaved
         )
 
-        var channels = try readSlice(from: sourceFile, format: format, startSample: startSample, endSample: endSample)
-
-        if declickEnabled {
-            for i in channels.indices {
-                channels[i] = Declicker.declick(channels[i]).samples
-            }
-        }
-
+        let channelCount = Int(format.channelCount)
+        let totalFrameCount = endSample - startSample
         let fadeSampleCount = FadeApplier.sampleCount(forDurationSeconds: fadeDurationSeconds, sampleRate: format.sampleRate)
-        if fadeSampleCount > 0 {
-            for i in channels.indices {
-                channels[i] = FadeApplier.applyFades(to: channels[i], fadeSampleCount: fadeSampleCount)
-            }
-        }
+        let declickers: [StreamingDeclicker]? = declickEnabled ? (0..<channelCount).map { _ in StreamingDeclicker() } : nil
 
-        try writeChannels(channels, format: format, to: outputFile)
-    }
-
-    /// Reads `[startSample, endSample)` into one `[Float]` array per channel — small enough
-    /// (single tracks, not whole sides) to hold entirely in memory so fades/declick can see the
-    /// full waveform rather than working chunk-by-chunk.
-    private static func readSlice(
-        from sourceFile: AVAudioFile,
-        format: AVAudioFormat,
-        startSample: Int64,
-        endSample: Int64
-    ) throws -> [[Float]] {
         sourceFile.framePosition = startSample
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readChunkSizeInFrames) else {
+        guard let readBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readChunkSizeInFrames) else {
             throw ExportError.couldNotCreateOutputFile
         }
 
-        let channelCount = Int(format.channelCount)
-        var channels = [[Float]](repeating: [], count: channelCount)
-        let totalFrameCount = endSample - startSample
-        for i in channels.indices { channels[i].reserveCapacity(Int(totalFrameCount)) }
-
+        var framesWritten: Int64 = 0
         var framesRemaining = totalFrameCount
         while framesRemaining > 0 {
             // Request the exact remaining count rather than always the full chunk size — see
             // docs/ROADMAP.md M3: AVAudioFile.read(into:frameCount:) has been observed to throw
             // rather than clamp when frameCount exceeds what's left to read.
             let framesToRead = AVAudioFrameCount(min(Int64(readChunkSizeInFrames), framesRemaining))
-            try sourceFile.read(into: buffer, frameCount: framesToRead)
-            guard buffer.frameLength > 0, let channelData = buffer.floatChannelData else { break }
+            try sourceFile.read(into: readBuffer, frameCount: framesToRead)
+            guard readBuffer.frameLength > 0, let channelData = readBuffer.floatChannelData else { break }
+            let count = Int(readBuffer.frameLength)
+            framesRemaining -= Int64(readBuffer.frameLength)
 
-            let count = Int(buffer.frameLength)
-            for channel in 0..<channelCount {
-                channels[channel].append(contentsOf: UnsafeBufferPointer(start: channelData[channel], count: count))
+            var chunk = (0..<channelCount).map { channel in
+                Array(UnsafeBufferPointer(start: channelData[channel], count: count))
             }
-            framesRemaining -= Int64(buffer.frameLength)
+            if let declickers {
+                chunk = zip(declickers, chunk).map { declicker, samples in declicker.process(samples) }
+            }
+            framesWritten += try writeProcessedChunk(
+                &chunk, format: format, to: outputFile,
+                outputOffset: framesWritten, totalFrameCount: totalFrameCount, fadeSampleCount: fadeSampleCount
+            )
         }
-        return channels
+
+        if let declickers {
+            var tail = declickers.map { $0.flush() }
+            framesWritten += try writeProcessedChunk(
+                &tail, format: format, to: outputFile,
+                outputOffset: framesWritten, totalFrameCount: totalFrameCount, fadeSampleCount: fadeSampleCount
+            )
+        }
     }
 
-    private static func writeChannels(_ channels: [[Float]], format: AVAudioFormat, to outputFile: AVAudioFile) throws {
-        guard let totalFrameCount = channels.first?.count, totalFrameCount > 0 else { return }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readChunkSizeInFrames) else {
-            throw ExportError.couldNotCreateOutputFile
+    /// Applies fades (positioned by `outputOffset` within the whole track) and writes one
+    /// processed chunk. Returns the number of frames written.
+    private static func writeProcessedChunk(
+        _ channels: inout [[Float]],
+        format: AVAudioFormat,
+        to outputFile: AVAudioFile,
+        outputOffset: Int64,
+        totalFrameCount: Int64,
+        fadeSampleCount: Int
+    ) throws -> Int64 {
+        guard let frameCount = channels.first?.count, frameCount > 0 else { return 0 }
+
+        if fadeSampleCount > 0 {
+            for i in channels.indices {
+                FadeApplier.applyFades(
+                    to: &channels[i],
+                    chunkStartIndex: outputOffset,
+                    totalSampleCount: totalFrameCount,
+                    fadeSampleCount: fadeSampleCount
+                )
+            }
         }
 
-        var framePosition = 0
-        while framePosition < totalFrameCount {
-            let framesToWrite = min(Int(readChunkSizeInFrames), totalFrameCount - framePosition)
-            guard let channelData = buffer.floatChannelData else { break }
-            for (channel, samples) in channels.enumerated() {
-                samples.withUnsafeBufferPointer { source in
-                    channelData[channel].update(from: source.baseAddress! + framePosition, count: framesToWrite)
-                }
-            }
-            buffer.frameLength = AVAudioFrameCount(framesToWrite)
-            try outputFile.write(from: buffer)
-            framePosition += framesToWrite
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
+              let channelData = buffer.floatChannelData
+        else {
+            throw ExportError.couldNotCreateOutputFile
         }
+        for (channel, samples) in channels.enumerated() {
+            samples.withUnsafeBufferPointer { source in
+                channelData[channel].update(from: source.baseAddress!, count: frameCount)
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(frameCount)
+        try outputFile.write(from: buffer)
+        return Int64(frameCount)
     }
 
     // MARK: - Cover art
